@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "common-lines"
+version = "0.1.0"
+description = "Batch Radon transforms for common-line detection in cryo-EM images."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Andrés" }
+]
+dependencies = [
+    "numpy>=1.24",
+    "numba>=0.59",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+    "scikit-image>=0.22",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "performance: performance comparison tests",
+]
