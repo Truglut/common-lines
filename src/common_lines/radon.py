@@ -214,3 +214,35 @@ def _batch_radon_square_numba(
         out[batch_idx, detector_idx, angle_idx] = total
 
     return out
+
+
+def batch_common_line_sinograms(
+    images: np.ndarray,
+    theta: np.ndarray | None = None,
+    *,
+    circle: bool = True,
+    warn_if_nonzero_outside_circle: bool = False,
+) -> np.ndarray:
+    """
+    Compute sinograms using the angular convention expected by the common-line
+    orientation code.
+
+    In this convention, a sinogram column labelled by theta corresponds to the
+    image-plane direction
+
+        (cos(theta), sin(theta)).
+
+    The lower-level batch_radon function follows the skimage-compatible rotation
+    convention, so the sign is converted here in one place.
+    """
+    if theta is None:
+        theta = np.arange(180.0)
+    else:
+        theta = np.asarray(theta, dtype=np.float64)
+
+    return batch_radon(
+        images,
+        theta=-theta,
+        circle=circle,
+        warn_if_nonzero_outside_circle=warn_if_nonzero_outside_circle,
+    )
