@@ -1,0 +1,137 @@
+import numpy as np
+from common_lines.detection import CommonLineResult
+
+
+def compute_transformation_matrices(
+    common_line_result_12: CommonLineResult,
+    common_line_result_13: CommonLineResult,
+    common_line_result_23: CommonLineResult,
+    eps: float = 1.0e-6
+):
+    """
+    Computes the transformation matrices that align images 1, 2, and 3 based on the
+    detected common lines between them.
+
+    The returned transformation matrices follow the passive / inverse rotation convention,
+    where the rotation is applied to the coordinate system rather than the image itself.
+    Equivalently, the transformation matrices can be interpreted as the rotation that
+    has to be applied to the images to align them with the reference.
+
+    The computation is done following a method almost identical to the one described in
+    "Angular reconstitution: A posteriori assignment of projection directions
+    for 3D reconstruction" (1987), by Van Heel.
+    The main difference is that we fix the rotation of image 1 to the identity matrix,
+    and compute the rotations of images 2 and 3 relative to image 1.
+
+    Parameters
+    ----------
+    common_line_result_12 : CommonLineResult
+        Describes the common line between images 1 and 2, including the detected angles.
+    common_line_result_13 : CommonLineResult
+        Describes the common line between images 1 and 3, including the detected angles.
+    common_line_result_23 : CommonLineResult
+        Describes the common line between images 2 and 3, including the detected angles.
+    eps: float
+        Small numerical constant that represents tolerance against zero-division
+        (because of possibly co-planar orientations).
+
+    Notes
+    -----
+    The transformation matrices are only uniquely determined by the common lines up to
+    handedness. Only one of the two possible solutions is returned.
+    """
+    # Extract the angles of the common lines from the results
+    angle_12_in_1 = np.deg2rad(common_line_result_12.angle_1)
+    angle_12_in_2 = np.deg2rad(common_line_result_12.angle_2)
+
+    angle_13_in_1 = np.deg2rad(common_line_result_13.angle_1)
+    angle_13_in_3 = np.deg2rad(common_line_result_13.angle_2)
+
+    angle_23_in_2 = np.deg2rad(common_line_result_23.angle_1)
+    angle_23_in_3 = np.deg2rad(common_line_result_23.angle_2)
+
+    c_12 = np.zeros(3)
+    c_13 = np.zeros(3)
+    c_23 = np.zeros(3)
+
+    ## Compute the 3D coordinates of the common lines
+    # The common lines contained in image 1 are represented in the XY plane because
+    # image 1 is fixed to the identity matrix
+    c_12[0] = np.cos(angle_12_in_1)
+    c_12[1] = np.sin(angle_12_in_1)
+    c_13[0] = np.cos(angle_13_in_1)
+    c_13[1] = np.sin(angle_13_in_1)
+
+    # The common line between image 2 and 3 is computed using the relative angles
+    # between the three common lines
+    a = angle_13_in_1 - angle_12_in_1
+    b = angle_23_in_2 - angle_12_in_2
+    c = angle_23_in_3 - angle_13_in_3
+
+    # Check for degenerate geometric configurations
+    sin_a = np.sin(a)
+    if abs(sin_a) < eps:
+        raise ValueError("Degenerate configuration: common lines in image 1 are parallel.")
+
+    # cos b = c_23 · c_12
+    # cos c = c_23 · c_13
+    c_23[0] = (c_13[1] * np.cos(b) - c_12[1] * np.cos(c)) / sin_a
+    c_23[1] = (c_12[0] * np.cos(c) - c_13[0] * np.cos(b)) / sin_a
+
+    # Use c_23 is unitary to compute the last coordinate
+    z2 = 1.0 - c_23[0] ** 2 - c_23[1] ** 2
+    if z2 < -eps:
+        raise ValueError("Inconsistent common-line angles: no valid 3D configuration.")
+    c_23[2] = np.sqrt(max(z2, 0.0))
+
+    # Compute the rotation matrices for each image based on the detected angles
+    R1 = np.eye(3)  # Image 1 is fixed to the identity matrix
+    R2 = _compute_matrix_from_common_lines(angle_12_in_2, c_12, angle_23_in_2, c_23)
+    R3 = _compute_matrix_from_common_lines(angle_13_in_3, c_13, angle_23_in_3, c_23)
+
+    return R1, R2, R3
+
+
+def _compute_matrix_from_common_lines(
+    theta_a: float,
+    c_a: np.ndarray,
+    theta_b: float,
+    c_b: np.ndarray,
+) -> np.ndarray:
+    """
+    Computes the transformation matrix corresponding to an image from the common lines
+    it shares with two other images, using the precomputed 3D coordinates of these
+    given common lines.
+
+    Parameters
+    ----------
+    theta_a : float
+        Detected angle of the second common line in the image, in radians.
+    c_a : np.ndarray
+        3D coordinates of the first common line.
+    theta_b : float
+        Detected angle of the second common line in the image, in radians.
+    c_b : np.ndarray
+        3D coordinates of the second common line.
+
+    Returns
+    -------
+    np.ndarray
+        3x3 corresponding to the rotation matrix that aligns the image to the reference
+        (the reference is implicit in the 3D coordinates of the common lines).
+    """
+    # Read angle of both common lines with image axes and compute difference
+    sin_diff = np.sin(theta_b - theta_a)
+
+    rotation_matrix = np.zeros((3, 3), dtype=np.float64)
+
+    # The first two rows of the rotation matrix are obtained by solving a linear system
+    # given by the coordinates of the two common lines
+    rotation_matrix[0, :] = (np.sin(theta_b) * c_a - np.sin(theta_a) * c_b) / sin_diff
+    rotation_matrix[1, :] = (np.cos(theta_a) * c_b - np.cos(theta_b) * c_a) / sin_diff
+
+    # The last row is the projection direction: orthogonal to both common lines, and
+    # unitary
+    rotation_matrix[2, :] = np.cross(c_a, c_b) / sin_diff
+
+    return rotation_matrix
