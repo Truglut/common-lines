@@ -35,7 +35,7 @@ class CommonLineResult:
     correlation: np.ndarray
     angle_1: np.ndarray | None = None
     angle_2: np.ndarray | None = None
-    reversed: np.ndarray | None = None
+    reversed_match: np.ndarray | None = None
     correlation_matrix: np.ndarray | None = None
 
 
@@ -87,7 +87,7 @@ def detect_common_lines(
     s2 = _as_batch_sinograms(sinograms_2)
 
     s1, s2 = _broadcast_batches(s1, s2)
-    
+
     batch_size, _, n_angles_1 = s1.shape
     _, _, n_angles_2 = s2.shape
 
@@ -147,7 +147,7 @@ def detect_common_lines(
         correlation=best_correlation,
         angle_1=angle_1,
         angle_2=angle_2,
-        reversed=reversed_selected,
+        reversed_match=reversed_selected,
         correlation_matrix=correlation_matrix,
     )
 
@@ -193,10 +193,9 @@ def detect_common_lines_all_pairs(
     s = np.asarray(sinograms)
     if s.ndim != 3:
         raise ValueError(
-            "sinograms must have shape (B, P, A). "
-            f"Got array with shape {s.shape}."
+            "sinograms must have shape (B, P, A). " f"Got array with shape {s.shape}."
         )
-    
+
     batch_size, _, n_angles = s.shape
 
     _validate_theta(theta, n_angles, "theta")
@@ -204,7 +203,7 @@ def detect_common_lines_all_pairs(
     # Compute correlation tensor
     z = _normalize_columns(s, eps=eps)
     corr = np.einsum("ipa,jpb->ijab", z, z, optimize=True)
-    
+
     # If allow_reversed is True, also compute correlations with reversed sinograms
     score = corr
     reversed_best_tensor = None
@@ -246,7 +245,7 @@ def detect_common_lines_all_pairs(
         correlation=best_correlation,
         angle_1=angle_1,
         angle_2=angle_2,
-        reversed=reversed_selected,
+        reversed_match=reversed_selected,
         correlation_matrix=correlation_matrix,
     )
 
@@ -352,6 +351,5 @@ def _validate_theta(
 
     if theta.shape[0] != n_angles:
         raise ValueError(
-            f"{name} must have length {n_angles}. "
-            f"Got length {theta.shape[0]}."
+            f"{name} must have length {n_angles}. " f"Got length {theta.shape[0]}."
         )

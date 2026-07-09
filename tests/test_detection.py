@@ -238,7 +238,7 @@ def test_detect_common_lines_with_reversed_detector_axis():
 
     assert result.index_1[0] == 4
     assert result.index_2[0] == 9
-    assert result.reversed[0]
+    assert result.reversed_match[0]
     assert result.correlation[0] == pytest.approx(1.0)
 
 
