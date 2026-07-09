@@ -41,14 +41,14 @@ def compute_transformation_matrices(
     handedness. Only one of the two possible solutions is returned.
     """
     # Extract the angles of the common lines from the results
-    angle_12_in_1 = np.deg2rad(common_line_result_12.angle_1)
-    angle_12_in_2 = np.deg2rad(common_line_result_12.angle_2)
+    angle_12_in_1 = _angle_to_rad(common_line_result_12.angle_1, "angle_12_in_1")
+    angle_12_in_2 = _angle_to_rad(common_line_result_12.angle_2, "angle_12_in_2")
 
-    angle_13_in_1 = np.deg2rad(common_line_result_13.angle_1)
-    angle_13_in_3 = np.deg2rad(common_line_result_13.angle_2)
+    angle_13_in_1 = _angle_to_rad(common_line_result_13.angle_1, "angle_13_in_1")
+    angle_13_in_3 = _angle_to_rad(common_line_result_13.angle_2, "angle_13_in_3")
 
-    angle_23_in_2 = np.deg2rad(common_line_result_23.angle_1)
-    angle_23_in_3 = np.deg2rad(common_line_result_23.angle_2)
+    angle_23_in_2 = _angle_to_rad(common_line_result_23.angle_1, "angle_23_in_2")
+    angle_23_in_3 = _angle_to_rad(common_line_result_23.angle_2, "angle_23_in_3")
 
     c_12 = np.zeros(3)
     c_13 = np.zeros(3)
@@ -135,3 +135,15 @@ def _compute_matrix_from_common_lines(
     rotation_matrix[2, :] = np.cross(c_a, c_b) / sin_diff
 
     return rotation_matrix
+
+
+def _angle_to_rad(angle: float | np.ndarray | None, name: str) -> float:
+    if angle is None:
+        raise ValueError(f"{name} cannot be None. Pass theta arrays to detect_common_lines.")
+
+    angle = np.asarray(angle)
+
+    if angle.size != 1:
+        raise ValueError(f"{name} must contain a single angle. Got shape {angle.shape}.")
+
+    return np.deg2rad(float(angle.reshape(-1)[0]))
