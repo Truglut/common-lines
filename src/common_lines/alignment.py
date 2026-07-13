@@ -6,7 +6,7 @@ def compute_transformation_matrices(
     common_line_result_12: CommonLineResult,
     common_line_result_13: CommonLineResult,
     common_line_result_23: CommonLineResult,
-    eps: float = 1.0e-6
+    eps: float = 1.0e-6,
 ):
     """
     Computes the transformation matrices that align images 1, 2, and 3 based on the
@@ -41,14 +41,89 @@ def compute_transformation_matrices(
     handedness. Only one of the two possible solutions is returned.
     """
     # Extract the angles of the common lines from the results
-    angle_12_in_1 = _angle_to_rad(common_line_result_12.angle_1, "angle_12_in_1")
-    angle_12_in_2 = _angle_to_rad(common_line_result_12.angle_2, "angle_12_in_2")
+    angle_12_in_1 = common_line_result_12.angle_1
+    angle_12_in_2 = common_line_result_12.angle_2
 
-    angle_13_in_1 = _angle_to_rad(common_line_result_13.angle_1, "angle_13_in_1")
-    angle_13_in_3 = _angle_to_rad(common_line_result_13.angle_2, "angle_13_in_3")
+    angle_13_in_1 = common_line_result_13.angle_1
+    angle_13_in_3 = common_line_result_13.angle_2
 
-    angle_23_in_2 = _angle_to_rad(common_line_result_23.angle_1, "angle_23_in_2")
-    angle_23_in_3 = _angle_to_rad(common_line_result_23.angle_2, "angle_23_in_3")
+    angle_23_in_2 = common_line_result_23.angle_1
+    angle_23_in_3 = common_line_result_23.angle_2
+
+    return compute_transformation_matrices_from_angles(
+        angle_12_in_1=angle_12_in_1,
+        angle_12_in_2=angle_12_in_2,
+        angle_13_in_1=angle_13_in_1,
+        angle_13_in_3=angle_13_in_3,
+        angle_23_in_2=angle_23_in_2,
+        angle_23_in_3=angle_23_in_3,
+        eps=eps
+    )
+
+
+def compute_transformation_matrices_from_angles(
+    angle_12_in_1: float,
+    angle_12_in_2: float,
+    angle_13_in_1: float,
+    angle_13_in_3: float,
+    angle_23_in_2: float,
+    angle_23_in_3: float,
+    eps: float = 1.0e-6,
+):
+    """
+    Computes the transformation matrices that align images 1, 2, and 3 based on the
+    detected common lines between them.
+
+    The returned transformation matrices follow the passive / inverse rotation convention,
+    where the rotation is applied to the coordinate system rather than the image itself.
+    Equivalently, the transformation matrices can be interpreted as the rotation that
+    has to be applied to the images to align them with the reference.
+
+    The computation is done following a method almost identical to the one described in
+    "Angular reconstitution: A posteriori assignment of projection directions
+    for 3D reconstruction" (1987), by Van Heel.
+    The main difference is that we fix the rotation of image 1 to the identity matrix,
+    and compute the rotations of images 2 and 3 relative to image 1.
+
+    Parameters
+    ----------
+    angle_12_in_1 : float
+        Angle at which the detected common line between images 1 and 2 was detected
+        in (the Fourier transform of) image 1.
+    angle_12_in_2 : float
+        Angle at which the detected common line between images 1 and 2 was detected
+        in (the Fourier transform of) image 2.
+    angle_13_in_1 : float
+        Angle at which the detected common line between images 1 and 3 was detected
+        in (the Fourier transform of) image 1.
+    angle_13_in_3 : float
+        Angle at which the detected common line between images 1 and 3 was detected
+        in (the Fourier transform of) image 3.
+    angle_23_in_2 : float
+        Angle at which the detected common line between images 2 and 3 was detected
+        in (the Fourier transform of) image 2.
+    angle_23_in_3 : float
+        Angle at which the detected common line between images 2 and 3 was detected
+        in (the Fourier transform of) image 3.
+    eps: float
+        Small numerical constant that represents tolerance against zero-division
+        (because of possibly co-planar orientations).
+
+
+    Notes
+    -----
+    The transformation matrices are only uniquely determined by the common lines up to
+    handedness. Only one of the two possible solutions is returned.
+    """
+    # Extract the angles of the common lines from the results
+    angle_12_in_1 = _angle_to_rad(angle_12_in_1, "angle_12_in_1")
+    angle_12_in_2 = _angle_to_rad(angle_12_in_2, "angle_12_in_2")
+
+    angle_13_in_1 = _angle_to_rad(angle_13_in_1, "angle_13_in_1")
+    angle_13_in_3 = _angle_to_rad(angle_13_in_3, "angle_13_in_3")
+
+    angle_23_in_2 = _angle_to_rad(angle_23_in_2, "angle_23_in_2")
+    angle_23_in_3 = _angle_to_rad(angle_23_in_3, "angle_23_in_3")
 
     c_12 = np.zeros(3)
     c_13 = np.zeros(3)
@@ -71,7 +146,9 @@ def compute_transformation_matrices(
     # Check for degenerate geometric configurations
     sin_a = np.sin(a)
     if abs(sin_a) < eps:
-        raise ValueError("Degenerate configuration: common lines in image 1 are parallel.")
+        raise ValueError(
+            "Degenerate configuration: common lines in image 1 are parallel."
+        )
 
     # cos b = c_23 · c_12
     # cos c = c_23 · c_13
@@ -139,11 +216,15 @@ def _compute_matrix_from_common_lines(
 
 def _angle_to_rad(angle: float | np.ndarray | None, name: str) -> float:
     if angle is None:
-        raise ValueError(f"{name} cannot be None. Pass theta arrays to detect_common_lines.")
+        raise ValueError(
+            f"{name} cannot be None. Pass theta arrays to detect_common_lines."
+        )
 
     angle = np.asarray(angle)
 
     if angle.size != 1:
-        raise ValueError(f"{name} must contain a single angle. Got shape {angle.shape}.")
+        raise ValueError(
+            f"{name} must contain a single angle. Got shape {angle.shape}."
+        )
 
     return np.deg2rad(float(angle.reshape(-1)[0]))
