@@ -3,8 +3,11 @@ import itertools
 import numpy as np
 
 from common_lines.radon import batch_common_line_sinograms
-from common_lines.detection import detect_common_lines_all_pairs, detect_common_lines
-from common_lines.alignment import compute_transformation_matrices_from_angles
+from common_lines.detection import detect_common_lines
+from common_lines.alignment import (
+    compute_transformation_matrices_from_angles,
+    HANDEDNESS_REFLECTION,
+)
 from common_lines.procrustes import nearest_rotation
 
 THETA = np.arange(0.0, 180.0, 0.5)
@@ -20,46 +23,53 @@ def build_relative_orientations_graph(
     images using a common-lines approach. Since a unique relative orientation
     requires a triplet of images to be resolved, the algorithm anchors each pair
     $(i, j)$ with a user-defined number of 'third images' ($k$).
+    
+    When several third images are used, the two handedness branches returned for 
+    each triplet are aligned before averaging. A final, simple handedness-selection 
+    step chooses one branch per ordered pair using triangle consistency with a fixed 
+    pair of reference images.
 
-    For each triplet $(i, j, k)$, a candidate rotation matrix is computed. The
-    final relative orientation for the pair is estimated by averaging these
-    matrices and projecting the result back onto the special orthogonal group
-    $SO(3)$ (finding the closest valid rotation matrix in Frobenius norm via SVD).
+    The selected matrices are still the independently estimated pairwise
+    rotations. They are not replaced by products of other graph edges, and the
+    graph is not forced to satisfy inverse or cycle consistency.
 
     Parameters
     ----------
-    images : np.ndarray
-        Array of input images with shape `(n_images, height, width)`.
-    n_third : int, optional
-        Number of random 'third images' to sample as anchors for each pair.
-        Must be between 1 and `n_images - 2`. By default 1.
-    random_seed : int or None, optional
-        Seed for the random number generator to ensure reproducible triplet
-        selection. By default None.
+    images
+        Input images with shape ``(n_images, height, width)``.
+    n_third
+        Maximum number of valid third images used to estimate each ordered pair.
+        Must lie in ``[1, n_images - 2]``.
+    random_seed
+        Seed used to randomize the order in which third images are tested.
+    handedness_reference
+        Ordered pair used to choose one of the two global handedness solutions.
+        Its first candidate is selected arbitrarily, and the remaining branches
+        are chosen relative to it.
 
     Returns
     -------
-    np.ndarray
-        The relative orientations graph as an array `A` of shape
-        `(n_images, n_images, 3, 3)`. The element `A[i, j]` is a $3 \times 3$
-        rotation matrix that aligns image `j` to the coordinate system of image `i`.
-        The diagonal elements `A[i, i]` are initialized as identity matrices.
-
-    Raises
-    ------
-    ValueError
-        If `n_third` is not in the valid range $[1, n_{images} - 2]$.
+    numpy.ndarray
+        Directed relative-orientation graph with shape
+        ``(n_images, n_images, 3, 3)``. The block ``A[i, j]`` aligns image
+        ``j`` with the coordinate system of image ``i``.
 
     Notes
     -----
-    Common lines are detected on an angle grid in [0, 180). Reversed profiles are
-    represented by oriented angles in [0, 360). This routine still uses the
-    first handedness solution returned for every triplet; this choice is
-    arbitrary and global handedness synchronization is not implemented yet.
+    The opposite, equally valid global solution is obtained by conjugating every
+    graph block with ``HANDEDNESS_REFLECTION``.
     """
+    # Input validation: images shape and number of third images
+    images = np.asarray(images)
+    if images.ndim != 3:
+        raise ValueError(
+            "images must have shape (n_images, height, width). "
+            f"Got array with shape {images.shape}."
+        )
     n_images = images.shape[0]
+    if n_images < 3:
+        raise ValueError("At least three images are required.")
 
-    # Validate input: number of third images must be compatible with dataset
     if not (1 <= n_third <= n_images - 2):
         raise ValueError(
             f"n_third must be in [1, n_images - 2] = [1, {n_images - 2}], got {n_third}."
@@ -86,7 +96,11 @@ def build_relative_orientations_graph(
         available_mask[i] = available_mask[j] = False
 
         common_line_ij = detect_common_lines(
-            sinograms[i], sinograms[j], theta_1=THETA, theta_2=THETA, allow_reversed=True
+            sinograms[i],
+            sinograms[j],
+            theta_1=THETA,
+            theta_2=THETA,
+            allow_reversed=True,
         )
         angle_ij_in_i = common_line_ij.angle_1
         angle_ij_in_j = common_line_ij.angle_2
