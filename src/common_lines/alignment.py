@@ -183,7 +183,7 @@ def _compute_matrix_from_common_lines(
     Parameters
     ----------
     theta_a : float
-        Detected angle of the second common line in the image, in radians.
+        Detected angle of the first common line in the image, in radians.
     c_a : np.ndarray
         3D coordinates of the first common line.
     theta_b : float
