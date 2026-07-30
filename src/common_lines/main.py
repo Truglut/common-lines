@@ -100,6 +100,34 @@ def build_relative_orientations_graph(
     )
 
 
+def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
+    """
+    Return the opposite-handed version of a relative-orientation graph.
+
+    Parameters
+    ----------
+    graph
+        Array with shape ``(n_images, n_images, 3, 3)``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Graph obtained by conjugating every block with
+        ``HANDEDNESS_REFLECTION``.
+    """
+    graph = np.asarray(graph, dtype=np.float64)
+    if graph.ndim != 4 or graph.shape[2:] != (3, 3):
+        raise ValueError(
+            "graph must have shape (n_images, n_images, 3, 3). "
+            f"Got array with shape {graph.shape}."
+        )
+    if graph.shape[0] != graph.shape[1]:
+        raise ValueError("The first two graph dimensions must be equal.")
+
+    J = HANDEDNESS_REFLECTION
+    return J @ graph @ J
+
+
 def _estimate_relative_orientation_candidates(
     images: np.ndarray, *, n_third: int, random_seed: int
 ) -> np.ndarray:
