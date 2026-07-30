@@ -59,22 +59,25 @@ def detect_common_lines(
     sinograms_2
         Second sinogram or batch of sinograms, with shape (P, A2) or (B, P, A2).
     theta_1
-        Optional angle array for sinograms_1, with shape (A1,).
+        Optional sampled angles for sinograms_1, with shape (A1,). A grid in
+        [0, 180) is sufficient when allow_reversed=True.
     theta_2
-        Optional angle array for sinograms_2, with shape (A2,).
+        Optional sampled angles for sinograms_2, with shape (A2,). A grid in
+        [0, 180) is sufficient when allow_reversed=True.
     eps
         Small numerical tolerance used when normalizing columns.
     allow_reversed
         If True, also compares columns after reversing the detector axis of the
-        second sinogram. This is useful when the same line may appear with
-        opposite orientation.
+        second sinogram. When a reversed profile is selected, angle_2 is shifted
+        by 180 degrees so that angle_1 and angle_2 describe oriented directions.
     return_correlation_matrix
         If True, include the full pairwise correlation matrix in the result.
 
     Returns
     -------
     CommonLineResult
-        Contains the best column pair and its correlation for each sinogram pair.
+        Contains the best column pair, correlation, and oriented common-line
+        angles for each sinogram pair.
 
     Notes
     -----
@@ -133,10 +136,13 @@ def detect_common_lines(
     angle_1 = None if theta_1 is None else np.asarray(theta_1)[index_1]
     angle_2 = None if theta_2 is None else np.asarray(theta_2)[index_2]
 
-    # If allow_reversed is True, get the reversed selection for each batch element
+    # Record whether the second profile was reversed and orient its angle accordingly.
     reversed_selected = None
     if allow_reversed:
         reversed_selected = reversed_best_matrix[batch_indices, index_1, index_2]
+        if angle_2 is not None:
+            angle_2 = np.where(reversed_selected, angle_2 + 180.0, angle_2)
+            angle_2 = np.mod(angle_2, 360.0)
 
     # If return_correlation_matrix is True, include the full correlation matrix in the result
     correlation_matrix = score if return_correlation_matrix else None
@@ -168,12 +174,14 @@ def detect_common_lines_all_pairs(
     sinograms
         Batch of sinograms with shape (B, P, A).
     theta
-        Optional angle array with shape (A,).
+        Optional sampled angle array with shape (A,). A grid in [0, 180) is
+        sufficient when allow_reversed=True.
     eps
         Small numerical tolerance used when normalizing columns.
     allow_reversed
         If True, also compares columns after reversing the detector axis of the
-        second sinogram.
+        second sinogram. Reversed matches are represented by adding 180 degrees
+        to angle_2.
     return_correlation_tensor
         If True, include the full correlation tensor with shape (B, B, A, A).
 
@@ -189,7 +197,6 @@ def detect_common_lines_all_pairs(
     detect_common_lines on explicit batches of image pairs.
     """
     # Input preparation and validation
-
     s = np.asarray(sinograms)
     if s.ndim != 3:
         raise ValueError(
@@ -236,6 +243,9 @@ def detect_common_lines_all_pairs(
             index_1,
             index_2,
         ]
+        if angle_2 is not None:
+            angle_2 = np.where(reversed_selected, angle_2 + 180.0, angle_2)
+            angle_2 = np.mod(angle_2, 360.0)
 
     correlation_matrix = score if return_correlation_tensor else None
 

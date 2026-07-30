@@ -91,12 +91,14 @@ def _prepare_images_like_skimage(images: np.ndarray, *, circle: bool) -> np.ndar
         img_shape = np.array([height, width])
 
         slices = tuple(
-            slice(
-                int(np.ceil(excess / 2)),
-                int(np.ceil(excess / 2) + shape_min),
+            (
+                slice(
+                    int(np.ceil(excess / 2)),
+                    int(np.ceil(excess / 2) + shape_min),
+                )
+                if excess > 0
+                else slice(None)
             )
-            if excess > 0
-            else slice(None)
             for excess in (img_shape - shape_min)
         )
 
@@ -108,15 +110,9 @@ def _prepare_images_like_skimage(images: np.ndarray, *, circle: bool) -> np.ndar
     new_center = [(size + p) // 2 for size, p in zip((height, width), pad)]
     old_center = [size // 2 for size in (height, width)]
 
-    pad_before = [
-        new_c - old_c
-        for old_c, new_c in zip(old_center, new_center)
-    ]
+    pad_before = [new_c - old_c for old_c, new_c in zip(old_center, new_center)]
 
-    pad_width = [
-        (before, total - before)
-        for before, total in zip(pad_before, pad)
-    ]
+    pad_width = [(before, total - before) for before, total in zip(pad_before, pad)]
 
     return np.pad(
         images,
@@ -175,14 +171,8 @@ def _batch_radon_square_numba(
         cos_a = np.cos(angle)
         sin_a = np.sin(angle)
 
-        col_base = (
-            cos_a * detector_idx
-            - center * (cos_a + sin_a - 1.0)
-        )
-        row_base = (
-            -sin_a * detector_idx
-            - center * (cos_a - sin_a - 1.0)
-        )
+        col_base = cos_a * detector_idx - center * (cos_a + sin_a - 1.0)
+        row_base = -sin_a * detector_idx - center * (cos_a - sin_a - 1.0)
 
         total = 0.0
 
@@ -227,13 +217,16 @@ def batch_common_line_sinograms(
     Compute sinograms using the angular convention expected by the common-line
     orientation code.
 
-    In this convention, a sinogram column labelled by theta corresponds to the
-    image-plane direction
+    In this convention, image coordinates are ``(x, y) = (column, row)`` and
+    positive y points towards increasing row indices. A sinogram column labelled
+    by theta therefore corresponds to the oriented image-plane direction
 
         (cos(theta), sin(theta)).
 
     The lower-level batch_radon function follows the skimage-compatible rotation
-    convention, so the sign is converted here in one place.
+    convention, so the sign is converted here in one place. Angles in [0, 180)
+    describe the unoriented lines; profile reversal can later be represented by
+    adding 180 degrees to the corresponding angle.
     """
     if theta is None:
         theta = np.arange(180.0)

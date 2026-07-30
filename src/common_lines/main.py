@@ -49,6 +49,13 @@ def build_relative_orientations_graph(
     ------
     ValueError
         If `n_third` is not in the valid range $[1, n_{images} - 2]$.
+
+    Notes
+    -----
+    Common lines are detected on an angle grid in [0, 180). Reversed profiles are
+    represented by oriented angles in [0, 360). This routine still uses the
+    first handedness solution returned for every triplet; this choice is
+    arbitrary and global handedness synchronization is not implemented yet.
     """
     n_images = images.shape[0]
 
@@ -79,14 +86,14 @@ def build_relative_orientations_graph(
         available_mask[i] = available_mask[j] = False
 
         common_line_ij = detect_common_lines(
-            sinograms[i], sinograms[j], theta_1=THETA, theta_2=THETA
+            sinograms[i], sinograms[j], theta_1=THETA, theta_2=THETA, allow_reversed=True
         )
         angle_ij_in_i = common_line_ij.angle_1
         angle_ij_in_j = common_line_ij.angle_2
 
         n_valid = 0
         estimated_rotation = np.zeros((3, 3), dtype=np.float64)
-        while n_valid <= n_third and available_mask.any():
+        while n_valid < n_third and available_mask.any():
             k = rng.choice(idx[available_mask])
             available_mask[k] = False
 
@@ -106,7 +113,7 @@ def build_relative_orientations_graph(
 
             try:
                 # Estimate rotation from the selected angles
-                _, rotation_j_to_i, _ = compute_transformation_matrices_from_angles(
+                solutions = compute_transformation_matrices_from_angles(
                     angle_12_in_1=angle_ij_in_i,
                     angle_12_in_2=angle_ij_in_j,
                     angle_13_in_1=angle_ik_in_i,
@@ -114,6 +121,10 @@ def build_relative_orientations_graph(
                     angle_23_in_2=angle_jk_in_j,
                     angle_23_in_3=angle_jk_in_k,
                 )
+
+                # The first hand is selected arbitrarily until handedness synchronization
+                # is implemented
+                _, rotation_j_to_i, _ = solutions[0]
                 n_valid += 1
                 estimated_rotation += rotation_j_to_i
             except ValueError as e:

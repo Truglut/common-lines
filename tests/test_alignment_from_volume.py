@@ -1,13 +1,17 @@
 import numpy as np
 import pytest
 
-from common_lines.alignment import compute_transformation_matrices
+from common_lines.alignment import (
+    compute_transformation_matrices,
+    compute_transformation_matrices_from_angles,
+    mirror_transformation_matrices,
+)
 from common_lines.detection import CommonLineResult, detect_common_lines
 from common_lines.radon import batch_common_line_sinograms
 
 
 THETA_DEG = np.arange(0.0, 180.0, 1.0)
-FINE_THETA_DEG = np.arange(0.0, 360.0, 0.5)
+FINE_THETA_DEG = np.arange(0.0, 180.0, 0.5)
 
 
 # Expected frames for three simple orthogonal views. Rows 0 and 1 are the image
@@ -58,6 +62,17 @@ def _rotation_distance_degrees(R_est: np.ndarray, R_true: np.ndarray) -> float:
     cos_angle = (np.trace(relative) - 1.0) / 2.0
     cos_angle = np.clip(cos_angle, -1.0, 1.0)
     return float(np.rad2deg(np.arccos(cos_angle)))
+
+
+def _global_rotation_distance_degrees(
+    estimated: tuple[np.ndarray, np.ndarray, np.ndarray],
+    expected: tuple[np.ndarray, np.ndarray, np.ndarray],
+) -> float:
+    """Return the largest rotation error across one complete triplet."""
+    return max(
+        _rotation_distance_degrees(R_est, R_expected)
+        for R_est, R_expected in zip(estimated, expected)
+    )
 
 
 def _make_asymmetric_volume(size: int = 65) -> np.ndarray:
@@ -237,21 +252,21 @@ def _detect_common_lines_for_three_images(
         sinograms[1],
         theta_1=theta,
         theta_2=theta,
-        allow_reversed=False,
+        allow_reversed=True,
     )
     result_13 = detect_common_lines(
         sinograms[0],
         sinograms[2],
         theta_1=theta,
         theta_2=theta,
-        allow_reversed=False,
+        allow_reversed=True,
     )
     result_23 = detect_common_lines(
         sinograms[1],
         sinograms[2],
         theta_1=theta,
         theta_2=theta,
-        allow_reversed=False,
+        allow_reversed=True,
     )
     return result_12, result_13, result_23
 
@@ -284,20 +299,43 @@ def test_detect_common_lines_keeps_array_outputs_for_a_single_pair():
     assert result.reversed_match.shape == (1,)
 
 
-def test_hand_checkable_orthogonal_common_lines_return_expected_frames():
-    """Exact common-line angles for three orthogonal views give a known solution."""
+def test_hand_checkable_orthogonal_common_lines_return_both_handednesses():
+    """Exact common-line angles give the expected solution and its mirror."""
     result_12 = _common_line_result(0.0, 0.0)    # global x in images 1 and 2
     result_13 = _common_line_result(90.0, 0.0)   # global y in images 1 and 3
     result_23 = _common_line_result(90.0, 90.0)  # global z in images 2 and 3
 
-    rotations = compute_transformation_matrices(result_12, result_13, result_23)
+    direct, mirrored = compute_transformation_matrices(
+        result_12,
+        result_13,
+        result_23,
+    )
+    expected = (EXPECTED_R1, EXPECTED_R2, EXPECTED_R3)
+    expected_mirrored = mirror_transformation_matrices(expected)
 
-    for R in rotations:
-        _assert_rotation_matrix(R)
+    for rotations in (direct, mirrored):
+        for R in rotations:
+            _assert_rotation_matrix(R)
 
-    assert np.allclose(rotations[0], EXPECTED_R1, atol=1.0e-12)
-    assert np.allclose(rotations[1], EXPECTED_R2, atol=1.0e-12)
-    assert np.allclose(rotations[2], EXPECTED_R3, atol=1.0e-12)
+    for R_est, R_expected in zip(direct, expected):
+        assert np.allclose(R_est, R_expected, atol=1.0e-12)
+
+    for R_est, R_expected in zip(mirrored, expected_mirrored):
+        assert np.allclose(R_est, R_expected, atol=1.0e-12)
+
+    solutions_from_angles = compute_transformation_matrices_from_angles(
+        angle_12_in_1=0.0,
+        angle_12_in_2=0.0,
+        angle_13_in_1=90.0,
+        angle_13_in_3=0.0,
+        angle_23_in_2=90.0,
+        angle_23_in_3=90.0,
+    )
+    for result_solution, angle_solution in zip(
+        (direct, mirrored), solutions_from_angles
+    ):
+        for R_result, R_angle in zip(result_solution, angle_solution):
+            assert np.allclose(R_result, R_angle, atol=1.0e-12)
 
 
 def test_radon_detects_the_obvious_axis_aligned_common_lines():
@@ -321,25 +359,38 @@ def test_radon_detects_the_obvious_axis_aligned_common_lines():
     assert _first(result_23.correlation) == pytest.approx(1.0)
 
 
-def test_axis_aligned_volume_pipeline_recovers_expected_frames():
-    """Volume -> projections -> sinograms -> common lines -> orientations."""
+def test_axis_aligned_volume_pipeline_recovers_one_global_handedness():
+    """The complete pipeline recovers both globally consistent hands."""
     projections = _axis_aligned_projections(_make_asymmetric_volume())
     sinograms = batch_common_line_sinograms(projections, theta=THETA_DEG, circle=True)
 
     detected = _detect_axis_aligned_common_lines(sinograms)
-    rotations = compute_transformation_matrices(*detected)
+    solutions = compute_transformation_matrices(*detected)
 
-    for R in rotations:
-        _assert_rotation_matrix(R, atol=1.0e-10)
+    expected = (EXPECTED_R1, EXPECTED_R2, EXPECTED_R3)
+    expected_mirrored = mirror_transformation_matrices(expected)
 
-    assert np.allclose(rotations[0], EXPECTED_R1, atol=1.0e-10)
-    assert np.allclose(rotations[1], EXPECTED_R2, atol=1.0e-10)
-    assert np.allclose(rotations[2], EXPECTED_R3, atol=1.0e-10)
+    for rotations in solutions:
+        for R in rotations:
+            _assert_rotation_matrix(R, atol=1.0e-10)
+
+    errors_to_expected = [
+        _global_rotation_distance_degrees(rotations, expected)
+        for rotations in solutions
+    ]
+    errors_to_mirrored = [
+        _global_rotation_distance_degrees(rotations, expected_mirrored)
+        for rotations in solutions
+    ]
+
+    assert min(errors_to_expected) < 1.0e-6
+    assert min(errors_to_mirrored) < 1.0e-6
 
 
-def test_arbitrary_volume_pipeline_recovers_similar_frames():
-    """A non-orthogonal synthetic case recovers the frames used to project it."""
+def test_arbitrary_volume_pipeline_recovers_one_global_handedness():
+    """A non-orthogonal case recovers a full triplet or its global mirror."""
     expected_rotations = _make_arbitrary_frames()
+    expected_mirrored = mirror_transformation_matrices(expected_rotations)
     projections = np.stack(
         [_project_gaussian_volume_model(R) for R in expected_rotations]
     )
@@ -351,13 +402,23 @@ def test_arbitrary_volume_pipeline_recovers_similar_frames():
     )
 
     detected = _detect_common_lines_for_three_images(sinograms, FINE_THETA_DEG)
-    rotations = compute_transformation_matrices(*detected)
+    solutions = compute_transformation_matrices(*detected)
 
-    for R in rotations:
-        _assert_rotation_matrix(R, atol=1.0e-8)
+    for rotations in solutions:
+        for R in rotations:
+            _assert_rotation_matrix(R, atol=1.0e-8)
 
-    for R_est, R_expected in zip(rotations, expected_rotations):
-        assert _rotation_distance_degrees(R_est, R_expected) < 1.0
+    errors_to_expected = [
+        _global_rotation_distance_degrees(rotations, expected_rotations)
+        for rotations in solutions
+    ]
+    errors_to_mirrored = [
+        _global_rotation_distance_degrees(rotations, expected_mirrored)
+        for rotations in solutions
+    ]
+
+    assert min(errors_to_expected) < 1.0
+    assert min(errors_to_mirrored) < 1.0
 
     for result in detected:
         assert _first(result.correlation) > 0.999
