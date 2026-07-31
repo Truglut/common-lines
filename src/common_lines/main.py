@@ -89,12 +89,10 @@ def build_relative_orientations_graph(
             "handedness_reference must contain two different valid image indices."
         )
 
-    print("Estimating candidates...")
     candidates = _estimate_relative_orientation_candidates(
         images, n_third=n_third, random_seed=random_seed
     )
 
-    print("Selecting handedness...")
     return _select_consistent_handedness(
         candidates, reference_pair=handedness_reference
     )
