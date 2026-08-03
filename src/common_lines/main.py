@@ -134,7 +134,8 @@ def build_relative_orientations_graph(
     to satisfy inverse or cycle consistency.
 
     The opposite, equally valid global solution is obtained by conjugating every
-    graph block with ``HANDEDNESS_REFLECTION``.
+    graph block with ``HANDEDNESS_REFLECTION``. This can be done with the
+    ``mirror_relative_orientations_graph`` function.
     """
     total_start = perf_counter()
     timings = PipelineTimings()
