@@ -10,6 +10,71 @@ from common_lines.alignment import (
 )
 from common_lines.procrustes import nearest_rotation
 
+from dataclasses import dataclass
+from time import perf_counter
+
+
+@dataclass
+class PipelineTimings:
+    """Execution times and counters for the common-lines pipeline."""
+
+    radon: float = 0.0
+    common_line_detection: float = 0.0
+    triplet_reconstruction: float = 0.0
+    branch_averaging: float = 0.0
+    handedness_selection: float = 0.0
+    total: float = 0.0
+
+    common_line_calls: int = 0
+    common_line_cache_hits: int = 0
+    valid_triplets: int = 0
+    rejected_triplets: int = 0
+
+    def report(self) -> str:
+        """Return a readable timing summary."""
+        measured = (
+            self.radon
+            + self.common_line_detection
+            + self.triplet_reconstruction
+            + self.branch_averaging
+            + self.handedness_selection
+        )
+        other = max(self.total - measured, 0.0)
+
+        lines = [
+            "Common-lines pipeline timing",
+            "----------------------------",
+            f"Total:                     {self.total:10.3f} s",
+            f"Radon transforms:          {self.radon:10.3f} s",
+            f"Common-line detection:     {self.common_line_detection:10.3f} s",
+            f"Triplet reconstruction:    {self.triplet_reconstruction:10.3f} s",
+            f"Branch averaging:          {self.branch_averaging:10.3f} s",
+            f"Handedness selection:      {self.handedness_selection:10.3f} s",
+            f"Other Python overhead:     {other:10.3f} s",
+            "",
+            f"Common-line computations:  {self.common_line_calls:10d}",
+            f"Common-line cache hits:    {self.common_line_cache_hits:10d}",
+            f"Valid triplets:            {self.valid_triplets:10d}",
+            f"Rejected triplets:         {self.rejected_triplets:10d}",
+        ]
+
+        total_requests = self.common_line_calls + self.common_line_cache_hits
+        if total_requests:
+            hit_rate = self.common_line_cache_hits / total_requests
+            lines.append(f"Common-line cache hit rate:{hit_rate:10.1%}")
+
+        if self.common_line_calls:
+            mean_detection = self.common_line_detection / self.common_line_calls
+            lines.append(f"Mean common-line time:      {mean_detection:10.6f} s")
+
+        attempted_triplets = self.valid_triplets + self.rejected_triplets
+        if attempted_triplets:
+            rejection_rate = self.rejected_triplets / attempted_triplets
+            lines.append(f"Triplet rejection rate:    {rejection_rate:10.1%}")
+
+        return "\n".join(lines)
+
+
 THETA = np.arange(0.0, 180.0, 0.5)
 
 
@@ -18,7 +83,9 @@ def build_relative_orientations_graph(
     n_third: int = 1,
     random_seed: int | None = None,
     handedness_reference: tuple[int, int] = (0, 1),
-) -> np.ndarray:
+    *,
+    return_timings: bool = False,
+) -> np.ndarray | tuple[np.ndarray, PipelineTimings]:
     """
     Builds a graph of relative 3D orientations between all pairs of images.
 
@@ -62,6 +129,9 @@ def build_relative_orientations_graph(
     The opposite, equally valid global solution is obtained by conjugating every
     graph block with ``HANDEDNESS_REFLECTION``.
     """
+    total_start = perf_counter()
+    timings = PipelineTimings()
+
     # Input validation: images shape and number of third images
     images = np.asarray(images)
     if images.ndim != 3:
@@ -90,12 +160,25 @@ def build_relative_orientations_graph(
         )
 
     candidates = _estimate_relative_orientation_candidates(
-        images, n_third=n_third, random_seed=random_seed
+        images,
+        n_third=n_third,
+        random_seed=random_seed,
+        timings=timings,
     )
 
-    return _select_consistent_handedness(
-        candidates, reference_pair=handedness_reference
+    start = perf_counter()
+    graph = _select_consistent_handedness(
+        candidates,
+        reference_pair=handedness_reference,
     )
+    timings.handedness_selection = perf_counter() - start
+
+    timings.total = perf_counter() - total_start
+
+    if return_timings:
+        return graph, timings
+
+    return graph
 
 
 def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
@@ -127,26 +210,38 @@ def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
 
 
 def _estimate_relative_orientation_candidates(
-    images: np.ndarray, *, n_third: int, random_seed: int
+    images: np.ndarray, *, n_third: int, random_seed: int, timings: PipelineTimings
 ) -> np.ndarray:
     n_images = images.shape[0]
     rng = np.random.default_rng(random_seed)
 
     # Pre-compute all sinograms
+    start = perf_counter()
     sinograms = batch_common_line_sinograms(images, theta=THETA)
+    timings.radon = perf_counter() - start
+
     common_line_cache: dict[tuple[int, int], CommonLineResult] = {}
 
     def get_common_line(i: int, j: int) -> CommonLineResult:
         key = (i, j)
-        if key not in common_line_cache:
-            common_line_cache[key] = detect_common_lines(
-                sinograms[i],
-                sinograms[j],
-                theta_1=THETA,
-                theta_2=THETA,
-                allow_reversed=True,
-            )
-        return common_line_cache[key]
+
+        if key in common_line_cache:
+            timings.common_line_cache_hits += 1
+            return common_line_cache[key]
+
+        start = perf_counter()
+        result = detect_common_lines(
+            sinograms[i],
+            sinograms[j],
+            theta_1=THETA,
+            theta_2=THETA,
+            allow_reversed=True,
+        )
+        timings.common_line_detection += perf_counter() - start
+        timings.common_line_calls += 1
+
+        common_line_cache[key] = result
+        return result
 
     # Allocate memory for the relative orientations graph
     candidates = np.empty(shape=(n_images, n_images, 2, 3, 3), dtype=np.float64)
@@ -161,7 +256,8 @@ def _estimate_relative_orientation_candidates(
     for i, j in itertools.permutations(range(n_images), 2):
         # Select available indices for third images and randomly shuffle them
         available_mask[:] = True
-        available_mask[i] = available_mask[j] = False
+        available_mask[i] = False
+        available_mask[j] = False
         third_indices = image_indices[available_mask].copy()
         rng.shuffle(third_indices)
 
@@ -170,10 +266,12 @@ def _estimate_relative_orientation_candidates(
 
         # Iterate over possible third images to estimate orientations
         for k in third_indices:
-            common_line_ik = get_common_line(i, int(k))
-            common_line_jk = get_common_line(j, int(k))
+            k = int(k)
+            common_line_ik = get_common_line(i, k)
+            common_line_jk = get_common_line(j, k)
 
             # Try to estimate orientation from the selected (i, j, k) triplet
+            start = perf_counter()
             try:
                 direct, mirrored = compute_transformation_matrices(
                     common_line_ij,
@@ -181,7 +279,12 @@ def _estimate_relative_orientation_candidates(
                     common_line_jk,
                 )
             except ValueError:
+                timings.triplet_reconstruction += perf_counter() - start
+                timings.rejected_triplets += 1
                 continue
+
+            timings.triplet_reconstruction += perf_counter() - start
+            timings.valid_triplets += 1
 
             # If the triplet was valid, append the result to the list
             branch_pairs.append((direct[1], mirrored[1]))
@@ -193,8 +296,10 @@ def _estimate_relative_orientation_candidates(
                 "Could not find a valid third image for the ordered pair "
                 f"({i}, {j})."
             )
-
+        start = perf_counter()
         direct, mirrored = _average_handedness_branches(branch_pairs)
+        timings.branch_averaging += perf_counter() - start
+
         candidates[i, j, 0] = direct
         candidates[i, j, 1] = mirrored
 
