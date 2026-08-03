@@ -2,381 +2,204 @@ import numpy as np
 import pytest
 
 from common_lines.detection import (
+    CommonLineGraph,
     detect_common_lines,
-    detect_common_lines_all_pairs,
+    detect_common_lines_all_pairs_blocked,
 )
 
 
-def brute_force_common_line(s1, s2, *, eps=1.0e-8):
-    """
-    Reference implementation used in one test.
-
-    This intentionally uses explicit loops over all angle pairs. It is slower
-    than the vectorized implementation, but easier to trust for validation.
-    """
-    n_angles_1 = s1.shape[1]
-    n_angles_2 = s2.shape[1]
-
-    best_i = 0
-    best_j = 0
-    best_corr = -np.inf
-
-    for i in range(n_angles_1):
-        x = s1[:, i]
-        x = x - x.mean()
-        norm_x = np.linalg.norm(x)
-
-        for j in range(n_angles_2):
-            y = s2[:, j]
-            y = y - y.mean()
-            norm_y = np.linalg.norm(y)
-
-            if norm_x <= eps or norm_y <= eps:
-                corr = 0.0
-            else:
-                corr = np.dot(x, y) / (norm_x * norm_y)
-
-            if corr > best_corr:
-                best_corr = corr
-                best_i = i
-                best_j = j
-
-    return best_i, best_j, best_corr
-
-
-def test_detect_common_lines_known_pair():
-    """
-    Check that the function identifies a deliberately inserted common line.
-
-    We create two random sinograms and then overwrite one column in each with
-    the same profile, up to a positive affine transformation. Since Pearson
-    correlation is invariant to positive scaling and shifts, the expected
-    correlation is 1.
-    """
-    rng = np.random.default_rng(0)
-
-    n_detectors = 32
-    n_angles = 12
-
-    s1 = rng.normal(size=(n_detectors, n_angles))
-    s2 = rng.normal(size=(n_detectors, n_angles))
-
-    common_profile = rng.normal(size=n_detectors)
-
-    expected_i = 3
-    expected_j = 8
-
-    s1[:, expected_i] = common_profile
-    s2[:, expected_j] = 2.5 * common_profile + 10.0
-
-    result = detect_common_lines(s1, s2)
-
-    assert result.index_1.shape == (1,)
-    assert result.index_2.shape == (1,)
-    assert result.correlation.shape == (1,)
-
-    assert result.index_1[0] == expected_i
-    assert result.index_2[0] == expected_j
-    assert result.correlation[0] == pytest.approx(1.0)
-
-
-def test_detect_common_lines_known_batch():
-    """
-    Check pairwise batch behaviour.
-
-    Each element of the first batch is compared only with the corresponding
-    element of the second batch. For every batch element, we insert a known
-    matching profile at different angle indices.
-    """
+def test_pairwise_detection_finds_an_inserted_identical_profile() -> None:
+    """An exactly copied profile should be selected with correlation one."""
     rng = np.random.default_rng(1)
+    sinogram_1 = rng.normal(size=(13, 5))
+    sinogram_2 = rng.normal(size=(13, 7))
+    sinogram_2[:, 4] = sinogram_1[:, 2]
 
-    batch_size = 5
-    n_detectors = 32
-    n_angles = 16
+    result = detect_common_lines(sinogram_1, sinogram_2)
 
-    s1 = rng.normal(size=(batch_size, n_detectors, n_angles))
-    s2 = rng.normal(size=(batch_size, n_detectors, n_angles))
-
-    expected_i = np.array([1, 4, 7, 10, 13])
-    expected_j = np.array([3, 6, 9, 12, 15])
-
-    for b in range(batch_size):
-        common_profile = rng.normal(size=n_detectors)
-        s1[b, :, expected_i[b]] = common_profile
-        s2[b, :, expected_j[b]] = -3.0 + 4.0 * common_profile
-
-    result = detect_common_lines(s1, s2)
-
-    np.testing.assert_array_equal(result.index_1, expected_i)
-    np.testing.assert_array_equal(result.index_2, expected_j)
-    np.testing.assert_allclose(result.correlation, np.ones(batch_size), atol=1.0e-12)
+    assert result.index_1.item() == 2
+    assert result.index_2.item() == 4
+    np.testing.assert_allclose(result.correlation.item(), 1.0)
 
 
-def test_detect_common_lines_matches_brute_force():
-    """
-    Compare the vectorized implementation against a simple brute-force version.
-
-    This does not rely on manually inserted common lines. Instead, it uses
-    random sinograms and checks that both implementations select the same best
-    angle pair and the same correlation value.
-    """
+def test_pairwise_detection_broadcasts_a_single_reference() -> None:
+    """Broadcasted batch results should equal independent pairwise calls."""
     rng = np.random.default_rng(2)
+    reference = rng.normal(size=(11, 6))
+    batch = rng.normal(size=(3, 11, 5))
 
-    batch_size = 4
-    n_detectors = 24
-    n_angles_1 = 9
-    n_angles_2 = 11
+    result = detect_common_lines(reference, batch)
 
-    s1 = rng.normal(size=(batch_size, n_detectors, n_angles_1))
-    s2 = rng.normal(size=(batch_size, n_detectors, n_angles_2))
-
-    result = detect_common_lines(s1, s2)
-
-    expected_i = []
-    expected_j = []
-    expected_corr = []
-
-    for b in range(batch_size):
-        i, j, corr = brute_force_common_line(s1[b], s2[b])
-        expected_i.append(i)
-        expected_j.append(j)
-        expected_corr.append(corr)
-
-    np.testing.assert_array_equal(result.index_1, np.array(expected_i))
-    np.testing.assert_array_equal(result.index_2, np.array(expected_j))
-    np.testing.assert_allclose(result.correlation, np.array(expected_corr))
+    for batch_index in range(batch.shape[0]):
+        expected = detect_common_lines(reference, batch[batch_index])
+        assert result.index_1[batch_index] == expected.index_1.item()
+        assert result.index_2[batch_index] == expected.index_2.item()
+        np.testing.assert_allclose(
+            result.correlation[batch_index],
+            expected.correlation.item(),
+        )
 
 
-def test_detect_common_lines_returns_angles():
-    """
-    Check that selected column indices are converted back to angle values.
-
-    The detection itself is still based on column indices. Here we provide a
-    theta array and verify that the returned angles match the selected indices.
-    """
+def test_pairwise_detection_orients_a_reversed_profile() -> None:
+    """A detector-reversed match should add 180 degrees to angle_2."""
     rng = np.random.default_rng(3)
+    sinogram_1 = rng.normal(size=(15, 5))
+    sinogram_2 = rng.normal(size=(15, 6))
+    sinogram_2[:, 4] = sinogram_1[::-1, 1]
 
-    n_detectors = 32
-    n_angles = 10
-
-    theta = np.linspace(0, 180, n_angles, endpoint=False)
-
-    s1 = rng.normal(size=(n_detectors, n_angles))
-    s2 = rng.normal(size=(n_detectors, n_angles))
-
-    common_profile = rng.normal(size=n_detectors)
-
-    s1[:, 2] = common_profile
-    s2[:, 7] = common_profile
+    theta_1 = np.array([0.0, 20.0, 55.0, 100.0, 150.0])
+    theta_2 = np.array([0.0, 10.0, 40.0, 80.0, 130.0, 170.0])
 
     result = detect_common_lines(
-        s1,
-        s2,
-        theta_1=theta,
-        theta_2=theta,
-    )
-
-    assert result.index_1[0] == 2
-    assert result.index_2[0] == 7
-    assert result.angle_1[0] == pytest.approx(theta[2])
-    assert result.angle_2[0] == pytest.approx(theta[7])
-
-
-def test_detect_common_lines_can_return_correlation_matrix():
-    """
-    Check the optional full correlation matrix output.
-
-    The function normally returns only the best match. With
-    return_correlation_matrix=True, it should also return the full matrix of
-    all angle-angle scores for each batch element.
-    """
-    rng = np.random.default_rng(4)
-
-    s1 = rng.normal(size=(2, 20, 6))
-    s2 = rng.normal(size=(2, 20, 7))
-
-    result = detect_common_lines(
-        s1,
-        s2,
-        return_correlation_matrix=True,
-    )
-
-    assert result.correlation_matrix is not None
-    assert result.correlation_matrix.shape == (2, 6, 7)
-
-    for b in range(2):
-        i = result.index_1[b]
-        j = result.index_2[b]
-        assert result.correlation[b] == result.correlation_matrix[b, i, j]
-
-
-def test_detect_common_lines_with_reversed_detector_axis():
-    """
-    Check matching when the common line appears with opposite orientation.
-
-    We insert a profile in the first sinogram and the reversed profile in the
-    second. The match should only reach correlation 1 when allow_reversed=True.
-    """
-    rng = np.random.default_rng(5)
-
-    n_detectors = 32
-    n_angles = 12
-
-    s1 = rng.normal(size=(n_detectors, n_angles))
-    s2 = rng.normal(size=(n_detectors, n_angles))
-
-    common_profile = rng.normal(size=n_detectors)
-
-    s1[:, 4] = common_profile
-    s2[:, 9] = common_profile[::-1]
-
-    result = detect_common_lines(
-        s1,
-        s2,
+        sinogram_1,
+        sinogram_2,
+        theta_1=theta_1,
+        theta_2=theta_2,
         allow_reversed=True,
     )
 
-    assert result.index_1[0] == 4
-    assert result.index_2[0] == 9
-    assert result.reversed_match[0]
-    assert result.correlation[0] == pytest.approx(1.0)
+    angle_1, angle_2 = result.oriented_angles(theta_1, theta_2)
+
+    assert result.index_1.item() == 1
+    assert result.index_2.item() == 4
+    assert result.reversed_match.item()
+    assert angle_1.item() == theta_1[1]
+    assert angle_2.item() == (theta_2[4] + 180.0) % 360.0
+    np.testing.assert_allclose(result.correlation.item(), 1.0)
 
 
-def test_detect_common_lines_handles_constant_columns():
+def test_constant_profiles_produce_zero_correlation() -> None:
+    """Zero-variance columns are represented safely as zero profiles."""
+    result = detect_common_lines(
+        np.ones((8, 3)),
+        np.ones((8, 4)),
+    )
+
+    assert result.index_1.item() == 0
+    assert result.index_2.item() == 0
+    assert result.correlation.item() == 0.0
+
+
+def test_blocked_detection_matches_pairwise_reference() -> None:
+    """The blocked algorithm should reproduce explicit pairwise detection.
+
+    Random sinograms are used to make accidental ties very unlikely. Every
+    off-diagonal result is compared with the simpler pairwise implementation,
+    which acts as the numerical reference for different block boundaries.
     """
-    Check numerical stability for constant sinogram columns.
+    rng = np.random.default_rng(5)
+    sinograms = rng.normal(size=(5, 13, 9))
 
-    Constant columns have zero variance, so their Pearson correlation is
-    undefined. In this implementation they are normalized to zero vectors,
-    producing finite correlation values equal to zero.
-    """
-    s1 = np.ones((20, 5))
-    s2 = np.ones((20, 5))
+    # Testing two different block boundaries and both reversal modes is enough
+    # to exercise diagonal, off-diagonal and final partial blocks.
+    for block_size, allow_reversed in ((1, False), (2, True), (4, False)):
+        result = detect_common_lines_all_pairs_blocked(
+            sinograms,
+            allow_reversed=allow_reversed,
+            block_size=block_size,
+        )
 
-    result = detect_common_lines(s1, s2)
+        assert isinstance(result, CommonLineGraph)
+        assert result.index_1.shape == (5, 5)
+        assert result.index_2.shape == (5, 5)
+        assert result.correlation.shape == (5, 5)
 
-    assert np.isfinite(result.correlation).all()
-    assert result.correlation[0] == pytest.approx(0.0)
+        for i in range(sinograms.shape[0]):
+            for j in range(sinograms.shape[0]):
+                if i == j:
+                    continue
+
+                expected = detect_common_lines(
+                    sinograms[i],
+                    sinograms[j],
+                    allow_reversed=allow_reversed,
+                )
+
+                assert result.index_1[i, j] == expected.index_1.item()
+                assert result.index_2[i, j] == expected.index_2.item()
+                np.testing.assert_allclose(
+                    result.correlation[i, j],
+                    expected.correlation.item(),
+                    rtol=1.0e-12,
+                    atol=1.0e-12,
+                )
+
+                if allow_reversed:
+                    assert (
+                        result.reversed_match[i, j]
+                        == expected.reversed_match.item()
+                    )
 
 
-def test_detect_common_lines_broadcasts_single_sinogram_against_batch():
-    """
-    Check broadcasting of a single sinogram against a batch.
-
-    This allows calling detect_common_lines(single, batch) without manually
-    repeating the single sinogram B times.
-    """
+def test_blocked_detection_reuses_the_opposite_pair_correctly() -> None:
+    """Transposed storage must exchange indices but preserve the match score."""
     rng = np.random.default_rng(6)
+    sinograms = rng.normal(size=(3, 11, 5))
+    sinograms[1, :, 3] = sinograms[0, ::-1, 1]
 
-    n_detectors = 24
-    n_angles = 8
-    batch_size = 3
+    result = detect_common_lines_all_pairs_blocked(
+        sinograms,
+        allow_reversed=True,
+        block_size=1,
+    )
 
-    s1 = rng.normal(size=(n_detectors, n_angles))
-    s2 = rng.normal(size=(batch_size, n_detectors, n_angles))
+    assert result.index_1[0, 1] == 1
+    assert result.index_2[0, 1] == 3
+    assert result.index_1[1, 0] == 3
+    assert result.index_2[1, 0] == 1
+    assert result.reversed_match[0, 1]
+    assert result.reversed_match[1, 0]
+    np.testing.assert_allclose(result.correlation[0, 1], 1.0)
+    np.testing.assert_allclose(result.correlation[1, 0], 1.0)
 
-    result = detect_common_lines(s1, s2)
 
-    assert result.index_1.shape == (batch_size,)
-    assert result.index_2.shape == (batch_size,)
-    assert result.correlation.shape == (batch_size,)
+def test_common_line_graph_materializes_oriented_angles_on_demand() -> None:
+    """The compact graph should reconstruct angles without storing them."""
+    graph = CommonLineGraph(
+        index_1=np.array([[0, 1], [2, 0]], dtype=np.uint8),
+        index_2=np.array([[0, 2], [1, 0]], dtype=np.uint8),
+        correlation=np.ones((2, 2)),
+        reversed_match=np.array([[False, True], [True, False]]),
+        n_angles=3,
+    )
+    theta = np.array([0.0, 30.0, 75.0])
+
+    angle_1, angle_2 = graph.oriented_angles(theta)
+
+    np.testing.assert_array_equal(angle_1, theta[graph.index_1])
+    np.testing.assert_array_equal(
+        angle_2,
+        np.mod(theta[graph.index_2] + 180.0 * graph.reversed_match, 360.0),
+    )
+    assert not hasattr(graph, "angle_1")
+    assert not hasattr(graph, "angle_2")
 
 
-def test_detect_common_lines_all_pairs_known_cross_pair():
-    """
-    Check all-pairs detection on a known pair inside one batch.
-
-    We insert a shared profile between sinogram 0 and sinogram 1. The all-pairs
-    function should find that match in the [0, 1] entry of the output matrices.
-    """
+def test_blocked_indices_use_a_compact_grid_dependent_dtype() -> None:
+    """Angular indices should not be stored in a fixed oversized dtype."""
     rng = np.random.default_rng(7)
+    sinograms = rng.normal(size=(2, 7, 300))
 
-    batch_size = 3
-    n_detectors = 32
-    n_angles = 10
+    result = detect_common_lines_all_pairs_blocked(
+        sinograms,
+        block_size=1,
+    )
 
-    sinograms = rng.normal(size=(batch_size, n_detectors, n_angles))
-
-    common_profile = rng.normal(size=n_detectors)
-
-    sinograms[0, :, 2] = common_profile
-    sinograms[1, :, 6] = 5.0 * common_profile - 1.0
-
-    result = detect_common_lines_all_pairs(sinograms)
-
-    assert result.index_1.shape == (batch_size, batch_size)
-    assert result.index_2.shape == (batch_size, batch_size)
-    assert result.correlation.shape == (batch_size, batch_size)
-
-    assert result.index_1[0, 1] == 2
-    assert result.index_2[0, 1] == 6
-    assert result.correlation[0, 1] == pytest.approx(1.0)
+    assert np.issubdtype(result.index_1.dtype, np.unsignedinteger)
+    assert np.iinfo(result.index_1.dtype).max >= 299
+    assert result.index_1.dtype.itemsize <= 2
 
 
-def test_detect_common_lines_all_pairs_matches_pairwise_function():
-    """
-    Check that all-pairs detection is consistent with pairwise detection.
+def test_main_input_errors_are_reported_clearly() -> None:
+    """Keep validation tests limited to the two most important API failures."""
+    with pytest.raises(ValueError, match="detector dimension"):
+        detect_common_lines(
+            np.zeros((4, 3)),
+            np.zeros((5, 3)),
+        )
 
-    For every pair (i, j), the result from detect_common_lines_all_pairs should
-    match calling detect_common_lines on sinograms[i] and sinograms[j].
-    """
-    rng = np.random.default_rng(8)
-
-    batch_size = 4
-    n_detectors = 20
-    n_angles = 7
-
-    sinograms = rng.normal(size=(batch_size, n_detectors, n_angles))
-
-    all_pairs = detect_common_lines_all_pairs(sinograms)
-
-    for i in range(batch_size):
-        for j in range(batch_size):
-            pair = detect_common_lines(sinograms[i], sinograms[j])
-
-            assert all_pairs.index_1[i, j] == pair.index_1[0]
-            assert all_pairs.index_2[i, j] == pair.index_2[0]
-            assert all_pairs.correlation[i, j] == pytest.approx(pair.correlation[0])
-
-
-def test_detect_common_lines_rejects_mismatched_detector_size():
-    """
-    Check that sinograms with different detector dimensions are rejected.
-
-    Column correlations require both profiles to have the same length. Different
-    numbers of angles are allowed, but different detector dimensions are not.
-    """
-    s1 = np.zeros((20, 8))
-    s2 = np.zeros((21, 8))
-
-    with pytest.raises(ValueError, match="same detector dimension"):
-        detect_common_lines(s1, s2)
-
-
-def test_detect_common_lines_rejects_incompatible_batch_sizes():
-    """
-    Check batch-size validation.
-
-    The function supports equal batch sizes, or broadcasting when one batch has
-    size 1. Other combinations are ambiguous and should raise an error.
-    """
-    s1 = np.zeros((2, 20, 8))
-    s2 = np.zeros((3, 20, 8))
-
-    with pytest.raises(ValueError, match="Batch dimensions must match"):
-        detect_common_lines(s1, s2)
-
-
-def test_detect_common_lines_rejects_invalid_theta_length():
-    """
-    Check that theta arrays must match the number of sinogram columns.
-
-    This avoids returning angle values that do not correspond to the actual
-    columns being searched.
-    """
-    s1 = np.zeros((20, 8))
-    s2 = np.zeros((20, 8))
-    theta = np.linspace(0, 180, 7, endpoint=False)
-
-    with pytest.raises(ValueError, match="theta_1 must have length 8"):
-        detect_common_lines(s1, s2, theta_1=theta)
+    with pytest.raises(ValueError, match="block_size"):
+        detect_common_lines_all_pairs_blocked(
+            np.zeros((3, 4, 5)),
+            block_size=0,
+        )

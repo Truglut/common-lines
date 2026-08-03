@@ -2,11 +2,10 @@ import numpy as np
 import pytest
 
 from common_lines.alignment import (
-    compute_transformation_matrices,
     compute_transformation_matrices_from_angles,
     mirror_transformation_matrices,
 )
-from common_lines.detection import CommonLineResult, detect_common_lines
+from common_lines.detection import detect_common_lines
 from common_lines.radon import batch_common_line_sinograms
 
 
@@ -35,20 +34,35 @@ EXPECTED_R3 = np.array(
 )
 
 
-def _common_line_result(angle_1: float, angle_2: float) -> CommonLineResult:
-    """Create a one-pair CommonLineResult using the same array format as detection."""
-    return CommonLineResult(
-        index_1=np.array([0]),
-        index_2=np.array([0]),
-        correlation=np.array([1.0]),
-        angle_1=np.array([angle_1], dtype=np.float64),
-        angle_2=np.array([angle_2], dtype=np.float64),
-    )
-
 
 def _first(value):
     """Extract the single value returned by one-pair common-line detection."""
     return np.asarray(value).reshape(-1)[0]
+
+
+def _oriented_pair(result, theta: np.ndarray) -> tuple[float, float]:
+    """Convert one pairwise detection result into two scalar oriented angles."""
+    angle_1, angle_2 = result.oriented_angles(theta, theta)
+    return float(_first(angle_1)), float(_first(angle_2))
+
+
+def _solve_detected_triplet(
+    detected: tuple[object, object, object],
+    theta: np.ndarray,
+):
+    """Convert detected indices to angles and reconstruct both handednesses."""
+    angle_12_in_1, angle_12_in_2 = _oriented_pair(detected[0], theta)
+    angle_13_in_1, angle_13_in_3 = _oriented_pair(detected[1], theta)
+    angle_23_in_2, angle_23_in_3 = _oriented_pair(detected[2], theta)
+
+    return compute_transformation_matrices_from_angles(
+        angle_12_in_1=angle_12_in_1,
+        angle_12_in_2=angle_12_in_2,
+        angle_13_in_1=angle_13_in_1,
+        angle_13_in_3=angle_13_in_3,
+        angle_23_in_2=angle_23_in_2,
+        angle_23_in_3=angle_23_in_3,
+    )
 
 
 def _assert_rotation_matrix(R: np.ndarray, *, atol: float = 1.0e-12) -> None:
@@ -118,7 +132,7 @@ def _axis_aligned_projections(volume: np.ndarray) -> np.ndarray:
 
 def _detect_axis_aligned_common_lines(
     sinograms: np.ndarray,
-) -> tuple[CommonLineResult, CommonLineResult, CommonLineResult]:
+) -> tuple[object, object, object]:
     result_12 = detect_common_lines(
         sinograms[0],
         sinograms[1],
@@ -246,7 +260,7 @@ def _project_gaussian_volume_model(
 def _detect_common_lines_for_three_images(
     sinograms: np.ndarray,
     theta: np.ndarray,
-) -> tuple[CommonLineResult, CommonLineResult, CommonLineResult]:
+) -> tuple[object, object, object]:
     result_12 = detect_common_lines(
         sinograms[0],
         sinograms[1],
@@ -271,10 +285,19 @@ def _detect_common_lines_for_three_images(
     return result_12, result_13, result_23
 
 
-def test_detect_common_lines_keeps_array_outputs_for_a_single_pair():
-    """A single sinogram pair still returns one-element arrays."""
+def test_detect_common_lines_keeps_compact_array_outputs_for_a_single_pair():
+    """
+    Pairwise detection stores only compact index, score and reversal arrays.
+
+    Oriented angles are reconstructed on demand from the angular grids instead
+    of being retained in every result object.
+    """
     projections = _axis_aligned_projections(_make_asymmetric_volume())
-    sinograms = batch_common_line_sinograms(projections[:2], theta=THETA_DEG, circle=True)
+    sinograms = batch_common_line_sinograms(
+        projections[:2],
+        theta=THETA_DEG,
+        circle=True,
+    )
 
     result = detect_common_lines(
         sinograms[0],
@@ -283,32 +306,25 @@ def test_detect_common_lines_keeps_array_outputs_for_a_single_pair():
         theta_2=THETA_DEG,
         allow_reversed=True,
     )
-
-    assert isinstance(result.index_1, np.ndarray)
-    assert isinstance(result.index_2, np.ndarray)
-    assert isinstance(result.correlation, np.ndarray)
-    assert isinstance(result.angle_1, np.ndarray)
-    assert isinstance(result.angle_2, np.ndarray)
-    assert isinstance(result.reversed_match, np.ndarray)
+    angle_1, angle_2 = result.oriented_angles(THETA_DEG, THETA_DEG)
 
     assert result.index_1.shape == (1,)
     assert result.index_2.shape == (1,)
     assert result.correlation.shape == (1,)
-    assert result.angle_1.shape == (1,)
-    assert result.angle_2.shape == (1,)
     assert result.reversed_match.shape == (1,)
+    assert angle_1.shape == (1,)
+    assert angle_2.shape == (1,)
 
 
 def test_hand_checkable_orthogonal_common_lines_return_both_handednesses():
     """Exact common-line angles give the expected solution and its mirror."""
-    result_12 = _common_line_result(0.0, 0.0)    # global x in images 1 and 2
-    result_13 = _common_line_result(90.0, 0.0)   # global y in images 1 and 3
-    result_23 = _common_line_result(90.0, 90.0)  # global z in images 2 and 3
-
-    direct, mirrored = compute_transformation_matrices(
-        result_12,
-        result_13,
-        result_23,
+    direct, mirrored = compute_transformation_matrices_from_angles(
+        angle_12_in_1=0.0,
+        angle_12_in_2=0.0,
+        angle_13_in_1=90.0,
+        angle_13_in_3=0.0,
+        angle_23_in_2=90.0,
+        angle_23_in_3=90.0,
     )
     expected = (EXPECTED_R1, EXPECTED_R2, EXPECTED_R3)
     expected_mirrored = mirror_transformation_matrices(expected)
@@ -323,19 +339,6 @@ def test_hand_checkable_orthogonal_common_lines_return_both_handednesses():
     for R_est, R_expected in zip(mirrored, expected_mirrored):
         assert np.allclose(R_est, R_expected, atol=1.0e-12)
 
-    solutions_from_angles = compute_transformation_matrices_from_angles(
-        angle_12_in_1=0.0,
-        angle_12_in_2=0.0,
-        angle_13_in_1=90.0,
-        angle_13_in_3=0.0,
-        angle_23_in_2=90.0,
-        angle_23_in_3=90.0,
-    )
-    for result_solution, angle_solution in zip(
-        (direct, mirrored), solutions_from_angles
-    ):
-        for R_result, R_angle in zip(result_solution, angle_solution):
-            assert np.allclose(R_result, R_angle, atol=1.0e-12)
 
 
 def test_radon_detects_the_obvious_axis_aligned_common_lines():
@@ -345,14 +348,13 @@ def test_radon_detects_the_obvious_axis_aligned_common_lines():
 
     result_12, result_13, result_23 = _detect_axis_aligned_common_lines(sinograms)
 
-    assert _first(result_12.angle_1) == pytest.approx(0.0)
-    assert _first(result_12.angle_2) == pytest.approx(0.0)
+    angles_12 = _oriented_pair(result_12, THETA_DEG)
+    angles_13 = _oriented_pair(result_13, THETA_DEG)
+    angles_23 = _oriented_pair(result_23, THETA_DEG)
 
-    assert _first(result_13.angle_1) == pytest.approx(90.0)
-    assert _first(result_13.angle_2) == pytest.approx(0.0)
-
-    assert _first(result_23.angle_1) == pytest.approx(90.0)
-    assert _first(result_23.angle_2) == pytest.approx(90.0)
+    assert angles_12 == pytest.approx((0.0, 0.0))
+    assert angles_13 == pytest.approx((90.0, 0.0))
+    assert angles_23 == pytest.approx((90.0, 90.0))
 
     assert _first(result_12.correlation) == pytest.approx(1.0)
     assert _first(result_13.correlation) == pytest.approx(1.0)
@@ -365,7 +367,7 @@ def test_axis_aligned_volume_pipeline_recovers_one_global_handedness():
     sinograms = batch_common_line_sinograms(projections, theta=THETA_DEG, circle=True)
 
     detected = _detect_axis_aligned_common_lines(sinograms)
-    solutions = compute_transformation_matrices(*detected)
+    solutions = _solve_detected_triplet(detected, THETA_DEG)
 
     expected = (EXPECTED_R1, EXPECTED_R2, EXPECTED_R3)
     expected_mirrored = mirror_transformation_matrices(expected)
@@ -402,7 +404,7 @@ def test_arbitrary_volume_pipeline_recovers_one_global_handedness():
     )
 
     detected = _detect_common_lines_for_three_images(sinograms, FINE_THETA_DEG)
-    solutions = compute_transformation_matrices(*detected)
+    solutions = _solve_detected_triplet(detected, FINE_THETA_DEG)
 
     for rotations in solutions:
         for R in rotations:

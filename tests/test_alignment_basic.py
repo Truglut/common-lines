@@ -1,19 +1,13 @@
 """Tests for orientation recovery from three pairwise common-line detections."""
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
 from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
-    compute_transformation_matrices,
+    compute_transformation_matrices_from_angles,
 )
 
-
-def _common_line(angle_1: float, angle_2: float):
-    """Small stand-in for CommonLineResult with only the fields used here."""
-    return SimpleNamespace(angle_1=angle_1, angle_2=angle_2)
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -50,11 +44,16 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
     # A simple, non-degenerate configuration. The angles represent oriented
     # common-line directions, including any 180-degree correction introduced
     # when detection finds a reversed profile.
-    cl12 = _common_line(angle_1=20.0, angle_2=70.0)
-    cl13 = _common_line(angle_1=110.0, angle_2=35.0)
-    cl23 = _common_line(angle_1=145.0, angle_2=125.0)
+    angles = {
+        "angle_12_in_1": 20.0,
+        "angle_12_in_2": 70.0,
+        "angle_13_in_1": 110.0,
+        "angle_13_in_3": 35.0,
+        "angle_23_in_2": 145.0,
+        "angle_23_in_3": 125.0,
+    }
 
-    direct, mirrored = compute_transformation_matrices(cl12, cl13, cl23)
+    direct, mirrored = compute_transformation_matrices_from_angles(**angles)
 
     for R1, R2, R3 in (direct, mirrored):
         _assert_rotation_matrix(R1)
@@ -63,13 +62,13 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
         assert np.allclose(R1, np.eye(3))
 
         _assert_common_line_correspondence(
-            R1, R2, cl12.angle_1, cl12.angle_2
+            R1, R2, 20.0, 70.0
         )
         _assert_common_line_correspondence(
-            R1, R3, cl13.angle_1, cl13.angle_2
+            R1, R3, 110.0, 35.0
         )
         _assert_common_line_correspondence(
-            R2, R3, cl23.angle_1, cl23.angle_2
+            R2, R3, 145.0, 125.0
         )
 
     J = HANDEDNESS_REFLECTION
@@ -81,11 +80,14 @@ def test_recovers_known_configuration_in_both_handednesses():
     # These angles describe three mutually orthogonal projection directions.
     # Both returned branches must preserve that geometry and be related by the
     # global handedness reflection.
-    cl12 = _common_line(angle_1=0.0, angle_2=0.0)
-    cl13 = _common_line(angle_1=90.0, angle_2=0.0)
-    cl23 = _common_line(angle_1=90.0, angle_2=90.0)
-
-    direct, mirrored = compute_transformation_matrices(cl12, cl13, cl23)
+    direct, mirrored = compute_transformation_matrices_from_angles(
+        angle_12_in_1=0.0,
+        angle_12_in_2=0.0,
+        angle_13_in_1=90.0,
+        angle_13_in_3=0.0,
+        angle_23_in_2=90.0,
+        angle_23_in_3=90.0,
+    )
 
     for rotations in (direct, mirrored):
         for R in rotations:
@@ -104,9 +106,12 @@ def test_recovers_known_configuration_in_both_handednesses():
 def test_rejects_degenerate_common_lines_in_reference_image():
     # If the two common lines seen in image 1 are parallel, image 1 does not fix
     # a valid 3D frame and the formula would divide by sin(angle_13 - angle_12).
-    cl12 = _common_line(angle_1=30.0, angle_2=10.0)
-    cl13 = _common_line(angle_1=30.0, angle_2=80.0)
-    cl23 = _common_line(angle_1=120.0, angle_2=45.0)
-
     with pytest.raises(ValueError, match="degenerate|parallel|sin"):
-        compute_transformation_matrices(cl12, cl13, cl23)
+        compute_transformation_matrices_from_angles(
+            angle_12_in_1=30.0,
+            angle_12_in_2=10.0,
+            angle_13_in_1=30.0,
+            angle_13_in_3=80.0,
+            angle_23_in_2=120.0,
+            angle_23_in_3=45.0,
+        )

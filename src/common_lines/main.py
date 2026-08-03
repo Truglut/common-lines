@@ -1,17 +1,19 @@
 import itertools
+from dataclasses import dataclass
+from time import perf_counter
 
 import numpy as np
 
-from common_lines.radon import batch_common_line_sinograms
-from common_lines.detection import detect_common_lines, CommonLineResult
 from common_lines.alignment import (
-    compute_transformation_matrices,
     HANDEDNESS_REFLECTION,
+    compute_transformation_matrices_from_angles,
 )
+from common_lines.detection import detect_common_lines_all_pairs_blocked
 from common_lines.procrustes import nearest_rotation
+from common_lines.radon import batch_common_line_sinograms
 
-from dataclasses import dataclass
-from time import perf_counter
+
+DEFAULT_THETA = np.arange(0.0, 180.0, 0.5)
 
 
 @dataclass
@@ -25,8 +27,8 @@ class PipelineTimings:
     handedness_selection: float = 0.0
     total: float = 0.0
 
-    common_line_calls: int = 0
-    common_line_cache_hits: int = 0
+    common_line_pairs: int = 0
+    common_line_blocks: int = 0
     valid_triplets: int = 0
     rejected_triplets: int = 0
 
@@ -52,20 +54,17 @@ class PipelineTimings:
             f"Handedness selection:      {self.handedness_selection:10.3f} s",
             f"Other Python overhead:     {other:10.3f} s",
             "",
-            f"Common-line computations:  {self.common_line_calls:10d}",
-            f"Common-line cache hits:    {self.common_line_cache_hits:10d}",
+            f"Directed common-line pairs:{self.common_line_pairs:10d}",
+            f"Correlation blocks:        {self.common_line_blocks:10d}",
             f"Valid triplets:            {self.valid_triplets:10d}",
             f"Rejected triplets:         {self.rejected_triplets:10d}",
         ]
 
-        total_requests = self.common_line_calls + self.common_line_cache_hits
-        if total_requests:
-            hit_rate = self.common_line_cache_hits / total_requests
-            lines.append(f"Common-line cache hit rate:{hit_rate:10.1%}")
-
-        if self.common_line_calls:
-            mean_detection = self.common_line_detection / self.common_line_calls
-            lines.append(f"Mean common-line time:      {mean_detection:10.6f} s")
+        if self.common_line_pairs:
+            mean_detection = self.common_line_detection / self.common_line_pairs
+            lines.append(
+                f"Mean time per pair:         {mean_detection:10.6f} s"
+            )
 
         attempted_triplets = self.valid_triplets + self.rejected_triplets
         if attempted_triplets:
@@ -75,33 +74,29 @@ class PipelineTimings:
         return "\n".join(lines)
 
 
-THETA = np.arange(0.0, 180.0, 0.5)
-
-
 def build_relative_orientations_graph(
     images: np.ndarray,
     n_third: int = 1,
     random_seed: int | None = None,
     handedness_reference: tuple[int, int] = (0, 1),
     *,
+    theta: np.ndarray | None = None,
+    common_line_block_size: int = 4,
     return_timings: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, PipelineTimings]:
     """
-    Builds a graph of relative 3D orientations between all pairs of images.
+    Build a graph of relative 3D orientations between all image pairs.
 
-    This function estimates the relative rotation matrix between every pair of
-    images using a common-lines approach. Since a unique relative orientation
-    requires a triplet of images to be resolved, the algorithm anchors each pair
-    $(i, j)$ with a user-defined number of 'third images' ($k$).
+    Sinograms and pairwise common lines are computed before the triplet loop.
+    Common-line detection is performed in image blocks, avoiding both repeated
+    pairwise normalization and the full correlation tensor with shape
+    ``(n_images, n_images, n_angles, n_angles)``.
 
-    When several third images are used, the two handedness branches returned for
-    each triplet are aligned before averaging. A final, simple handedness-selection
-    step chooses one branch per ordered pair using triangle consistency with a fixed
-    pair of reference images.
-
-    The selected matrices are still the independently estimated pairwise
-    rotations. They are not replaced by products of other graph edges, and the
-    graph is not forced to satisfy inverse or cycle consistency.
+    A unique relative orientation requires a triplet of images. Each ordered pair
+    ``(i, j)`` is therefore estimated using up to ``n_third`` valid third images.
+    When several estimates are available, their handedness branches are aligned
+    before averaging. A final handedness-selection step chooses one branch per
+    ordered pair using triangle consistency with a fixed reference pair.
 
     Parameters
     ----------
@@ -116,53 +111,48 @@ def build_relative_orientations_graph(
         Ordered pair used to choose one of the two global handedness solutions.
         Its first candidate is selected arbitrarily, and the remaining branches
         are chosen relative to it.
+    theta
+        Angular grid in degrees used to compute the sinograms. If None,
+        ``DEFAULT_THETA`` is used.
+    common_line_block_size
+        Number of images per correlation block in all-pairs common-line
+        detection. Larger values may improve throughput but require more memory.
+    return_timings
+        If True, also return a ``PipelineTimings`` instance.
 
     Returns
     -------
-    numpy.ndarray
+    numpy.ndarray or tuple
         Directed relative-orientation graph with shape
-        ``(n_images, n_images, 3, 3)``. The block ``A[i, j]`` aligns image
-        ``j`` with the coordinate system of image ``i``.
+        ``(n_images, n_images, 3, 3)``. The block ``graph[i, j]`` aligns image
+        ``j`` with the coordinate system of image ``i``. If ``return_timings``
+        is True, the graph and timing information are returned as a tuple.
 
     Notes
     -----
+    The pairwise rotations are estimated independently. The graph is not forced
+    to satisfy inverse or cycle consistency.
+
     The opposite, equally valid global solution is obtained by conjugating every
     graph block with ``HANDEDNESS_REFLECTION``.
     """
     total_start = perf_counter()
     timings = PipelineTimings()
 
-    # Input validation: images shape and number of third images
-    images = np.asarray(images)
-    if images.ndim != 3:
-        raise ValueError(
-            "images must have shape (n_images, height, width). "
-            f"Got array with shape {images.shape}."
-        )
-    n_images = images.shape[0]
-    if n_images < 3:
-        raise ValueError("At least three images are required.")
-
-    if not (1 <= n_third <= n_images - 2):
-        raise ValueError(
-            f"n_third must be in [1, n_images - 2] = [1, {n_images - 2}], got {n_third}."
-        )
-
-    # Select the given handedness reference and validate it
-    reference_i, reference_j = handedness_reference
-    if not (
-        0 <= reference_i < n_images
-        and 0 <= reference_j < n_images
-        and reference_i != reference_j
-    ):
-        raise ValueError(
-            "handedness_reference must contain two different valid image indices."
-        )
+    images, theta_array = _validate_pipeline_inputs(
+        images,
+        n_third=n_third,
+        handedness_reference=handedness_reference,
+        theta=theta,
+        common_line_block_size=common_line_block_size,
+    )
 
     candidates = _estimate_relative_orientation_candidates(
         images,
+        theta=theta_array,
         n_third=n_third,
         random_seed=random_seed,
+        common_line_block_size=common_line_block_size,
         timings=timings,
     )
 
@@ -172,12 +162,10 @@ def build_relative_orientations_graph(
         reference_pair=handedness_reference,
     )
     timings.handedness_selection = perf_counter() - start
-
     timings.total = perf_counter() - total_start
 
     if return_timings:
         return graph, timings
-
     return graph
 
 
@@ -209,74 +197,129 @@ def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
     return J @ graph @ J
 
 
-def _estimate_relative_orientation_candidates(
-    images: np.ndarray, *, n_third: int, random_seed: int, timings: PipelineTimings
-) -> np.ndarray:
+def _validate_pipeline_inputs(
+    images: np.ndarray,
+    *,
+    n_third: int,
+    handedness_reference: tuple[int, int],
+    theta: np.ndarray | None,
+    common_line_block_size: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Validate the public pipeline inputs and prepare the angular grid."""
+    images = np.asarray(images)
+    if images.ndim != 3:
+        raise ValueError(
+            "images must have shape (n_images, height, width). "
+            f"Got array with shape {images.shape}."
+        )
+
     n_images = images.shape[0]
+    if n_images < 3:
+        raise ValueError("At least three images are required.")
+
+    if not (1 <= n_third <= n_images - 2):
+        raise ValueError(
+            f"n_third must be in [1, n_images - 2] = [1, {n_images - 2}], "
+            f"got {n_third}."
+        )
+
+    reference_i, reference_j = handedness_reference
+    if not (
+        0 <= reference_i < n_images
+        and 0 <= reference_j < n_images
+        and reference_i != reference_j
+    ):
+        raise ValueError(
+            "handedness_reference must contain two different valid image indices."
+        )
+
+    if common_line_block_size < 1:
+        raise ValueError(
+            "common_line_block_size must be at least 1, "
+            f"got {common_line_block_size}."
+        )
+
+    theta_array = np.asarray(
+        DEFAULT_THETA if theta is None else theta,
+        dtype=np.float64,
+    )
+    if theta_array.ndim != 1 or theta_array.size == 0:
+        raise ValueError("theta must be a non-empty one-dimensional array.")
+    if not np.all(np.isfinite(theta_array)):
+        raise ValueError("theta must contain only finite values.")
+
+    return images, theta_array
+
+
+def _estimate_relative_orientation_candidates(
+    images: np.ndarray,
+    *,
+    theta: np.ndarray,
+    n_third: int,
+    random_seed: int | None,
+    common_line_block_size: int,
+    timings: PipelineTimings,
+) -> np.ndarray:
+    """
+    Estimate both handedness candidates for every ordered image pair.
+
+    All common lines are detected and stored before entering the triplet loop.
+    """
+    n_images = images.shape[0]
+    image_indices = np.arange(n_images)
     rng = np.random.default_rng(random_seed)
 
-    # Pre-compute all sinograms
     start = perf_counter()
-    sinograms = batch_common_line_sinograms(images, theta=THETA)
+    sinograms = batch_common_line_sinograms(images, theta=theta)
     timings.radon = perf_counter() - start
 
-    common_line_cache: dict[tuple[int, int], CommonLineResult] = {}
+    start = perf_counter()
+    common_lines = detect_common_lines_all_pairs_blocked(
+        sinograms,
+        allow_reversed=True,
+        block_size=common_line_block_size,
+    )
+    angle_1, angle_2 = common_lines.oriented_angles(theta)
+    timings.common_line_detection = perf_counter() - start
 
-    def get_common_line(i: int, j: int) -> CommonLineResult:
-        key = (i, j)
+    # These arrays are no longer needed after the oriented angles have been
+    # materialized. Releasing them is useful when many images or angles are used.
+    del sinograms, common_lines
 
-        if key in common_line_cache:
-            timings.common_line_cache_hits += 1
-            return common_line_cache[key]
+    timings.common_line_pairs = n_images * (n_images - 1)
+    n_blocks = (n_images + common_line_block_size - 1) // common_line_block_size
+    timings.common_line_blocks = n_blocks * (n_blocks + 1) // 2
 
-        start = perf_counter()
-        result = detect_common_lines(
-            sinograms[i],
-            sinograms[j],
-            theta_1=THETA,
-            theta_2=THETA,
-            allow_reversed=True,
-        )
-        timings.common_line_detection += perf_counter() - start
-        timings.common_line_calls += 1
-
-        common_line_cache[key] = result
-        return result
-
-    # Allocate memory for the relative orientations graph
-    candidates = np.empty(shape=(n_images, n_images, 2, 3, 3), dtype=np.float64)
-
-    # Overwrite diagonal entries with the identity matrix (alignment of an image against itself)
-    image_indices = np.arange(n_images)
-    candidates[image_indices, image_indices, 0] = np.eye(3)
-    candidates[image_indices, image_indices, 1] = np.eye(3)
+    candidates = np.empty(
+        (n_images, n_images, 2, 3, 3),
+        dtype=np.float64,
+    )
+    candidates[image_indices, image_indices, :, :, :] = np.eye(3)
 
     available_mask = np.ones(n_images, dtype=bool)
-    # Loop over image pairs to estimate their relative orientations
+
     for i, j in itertools.permutations(range(n_images), 2):
-        # Select available indices for third images and randomly shuffle them
         available_mask[:] = True
         available_mask[i] = False
         available_mask[j] = False
+
         third_indices = image_indices[available_mask].copy()
         rng.shuffle(third_indices)
 
-        common_line_ij = get_common_line(i, j)
         branch_pairs: list[tuple[np.ndarray, np.ndarray]] = []
 
-        # Iterate over possible third images to estimate orientations
-        for k in third_indices:
-            k = int(k)
-            common_line_ik = get_common_line(i, k)
-            common_line_jk = get_common_line(j, k)
+        for k_value in third_indices:
+            k = int(k_value)
 
-            # Try to estimate orientation from the selected (i, j, k) triplet
             start = perf_counter()
             try:
-                direct, mirrored = compute_transformation_matrices(
-                    common_line_ij,
-                    common_line_ik,
-                    common_line_jk,
+                direct, mirrored = compute_transformation_matrices_from_angles(
+                    angle_12_in_1=float(angle_1[i, j]),
+                    angle_12_in_2=float(angle_2[i, j]),
+                    angle_13_in_1=float(angle_1[i, k]),
+                    angle_13_in_3=float(angle_2[i, k]),
+                    angle_23_in_2=float(angle_1[j, k]),
+                    angle_23_in_3=float(angle_2[j, k]),
                 )
             except ValueError:
                 timings.triplet_reconstruction += perf_counter() - start
@@ -286,7 +329,7 @@ def _estimate_relative_orientation_candidates(
             timings.triplet_reconstruction += perf_counter() - start
             timings.valid_triplets += 1
 
-            # If the triplet was valid, append the result to the list
+            # The second matrix aligns image j with the frame of image i.
             branch_pairs.append((direct[1], mirrored[1]))
             if len(branch_pairs) == n_third:
                 break
@@ -296,12 +339,13 @@ def _estimate_relative_orientation_candidates(
                 "Could not find a valid third image for the ordered pair "
                 f"({i}, {j})."
             )
+
         start = perf_counter()
-        direct, mirrored = _average_handedness_branches(branch_pairs)
+        direct_mean, mirrored_mean = _average_handedness_branches(branch_pairs)
         timings.branch_averaging += perf_counter() - start
 
-        candidates[i, j, 0] = direct
-        candidates[i, j, 1] = mirrored
+        candidates[i, j, 0] = direct_mean
+        candidates[i, j, 1] = mirrored_mean
 
     return candidates
 
@@ -331,7 +375,9 @@ def _average_handedness_branches(
 
 
 def _select_consistent_handedness(
-    candidates: np.ndarray, *, reference_pair: tuple[int, int]
+    candidates: np.ndarray,
+    *,
+    reference_pair: tuple[int, int],
 ) -> np.ndarray:
     """
     Select one globally consistent handedness branch for each graph edge.
@@ -341,7 +387,6 @@ def _select_consistent_handedness(
     images. Every remaining directed edge keeps its independent estimate and
     only chooses the branch closest to the rotation predicted by that star.
     """
-    # Prepare and validate input
     candidates = np.asarray(candidates, dtype=np.float64)
     if candidates.ndim != 5 or candidates.shape[2:] != (2, 3, 3):
         raise ValueError(
@@ -358,10 +403,10 @@ def _select_consistent_handedness(
     diagonal = np.arange(n_images)
     graph[diagonal, diagonal] = np.eye(3)
 
-    # The first candidate of the reference edge fixes one of the two global hands
+    # The first candidate of the reference edge fixes one of the two global hands.
     graph[reference_i, reference_j] = candidates[reference_i, reference_j, 0]
 
-    # Select a handedness-consistent star around the first reference image
+    # Select a handedness-consistent star around the first reference image.
     for k in range(n_images):
         if k == reference_i or k == reference_j:
             continue
@@ -376,25 +421,35 @@ def _select_consistent_handedness(
                     @ graph[reference_i, reference_j]
                 )
                 error = np.linalg.norm(
-                    predicted - candidates[reference_i, k, branch_ik], ord="fro"
+                    predicted - candidates[reference_i, k, branch_ik],
+                    ord="fro",
                 )
 
                 if error < best_error:
                     best_error = error
                     best_reference_branch = branch_ik
 
-        graph[reference_i, k] = candidates[reference_i, k, best_reference_branch]
+        graph[reference_i, k] = candidates[
+            reference_i,
+            k,
+            best_reference_branch,
+        ]
 
-    # Choose every other directed edge using the selected reference star. The
-    # stored edge remains its independently estimated candidate.
+    # Choose every other directed edge using the selected reference star.
     for i, j in itertools.permutations(range(n_images), 2):
         if i == reference_i:
             continue
 
         predicted = graph[reference_i, j] @ graph[reference_i, i].T
 
-        direct_distance = np.linalg.norm(candidates[i, j, 0] - predicted, ord="fro")
-        mirrored_distance = np.linalg.norm(candidates[i, j, 1] - predicted, ord="fro")
+        direct_distance = np.linalg.norm(
+            candidates[i, j, 0] - predicted,
+            ord="fro",
+        )
+        mirrored_distance = np.linalg.norm(
+            candidates[i, j, 1] - predicted,
+            ord="fro",
+        )
 
         branch = 0 if direct_distance <= mirrored_distance else 1
         graph[i, j] = candidates[i, j, branch]
