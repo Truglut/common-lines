@@ -8,6 +8,7 @@ from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
     compute_transformation_matrices_from_angles,
 )
+from common_lines.centering import precenter_images
 from common_lines.detection import detect_common_lines_all_pairs_blocked
 from common_lines.procrustes import nearest_rotation
 from common_lines.radon import batch_common_line_sinograms
@@ -20,6 +21,7 @@ DEFAULT_THETA = np.arange(0.0, 180.0, 0.5)
 class PipelineTimings:
     """Execution times and counters for the common-lines pipeline."""
 
+    precentering: float = 0.0
     radon: float = 0.0
     common_line_detection: float = 0.0
     triplet_reconstruction: float = 0.0
@@ -35,7 +37,8 @@ class PipelineTimings:
     def report(self) -> str:
         """Return a readable timing summary."""
         measured = (
-            self.radon
+            self.precentering
+            + self.radon
             + self.common_line_detection
             + self.triplet_reconstruction
             + self.branch_averaging
@@ -47,6 +50,7 @@ class PipelineTimings:
             "Common-lines pipeline timing",
             "----------------------------",
             f"Total:                     {self.total:10.3f} s",
+            f"Pre-centering:             {self.precentering:10.3f} s",
             f"Radon transforms:          {self.radon:10.3f} s",
             f"Common-line detection:     {self.common_line_detection:10.3f} s",
             f"Triplet reconstruction:    {self.triplet_reconstruction:10.3f} s",
@@ -81,6 +85,7 @@ def build_relative_orientations_graph(
     handedness_reference: tuple[int, int] = (0, 1),
     *,
     theta: np.ndarray | None = None,
+    precenter: bool = False,
     common_line_block_size: int = 4,
     return_timings: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, PipelineTimings]:
@@ -114,6 +119,10 @@ def build_relative_orientations_graph(
     theta
         Angular grid in degrees used to compute the sinograms. If None,
         ``DEFAULT_THETA`` is used.
+    precenter
+        If True, approximately center all particles before computing their
+        sinograms. Horizontal and vertical corrections are estimated in batch
+        from correlations with reflected versions of the original images.
     common_line_block_size
         Number of images per correlation block in all-pairs common-line
         detection. Larger values may improve throughput but require more memory.
@@ -148,6 +157,11 @@ def build_relative_orientations_graph(
         common_line_block_size=common_line_block_size,
     )
 
+    if precenter:
+        start = perf_counter()
+        images = precenter_images(images)
+        timings.precentering = perf_counter() - start
+
     candidates = _estimate_relative_orientation_candidates(
         images,
         theta=theta_array,
@@ -156,6 +170,7 @@ def build_relative_orientations_graph(
         common_line_block_size=common_line_block_size,
         timings=timings,
     )
+    del images
 
     start = perf_counter()
     graph = _select_consistent_handedness(
