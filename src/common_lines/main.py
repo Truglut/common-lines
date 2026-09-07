@@ -253,6 +253,11 @@ def _validate_pipeline_inputs(
             f"Got array with shape {images.shape}."
         )
 
+    if images.shape[-2] != images.shape[-1]:
+        raise ValueError(
+            f"Only square images are currently supported; got image shape {images.shape}"
+        )
+
     n_images = images.shape[0]
     if n_images < 3:
         raise ValueError("At least three images are required.")
