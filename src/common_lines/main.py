@@ -13,7 +13,6 @@ from common_lines.detection import detect_common_lines_all_pairs_blocked
 from common_lines.procrustes import nearest_rotation
 from common_lines.radon import batch_common_line_sinograms
 
-
 DEFAULT_THETA = np.arange(0.0, 180.0, 0.5)
 
 
@@ -66,9 +65,7 @@ class PipelineTimings:
 
         if self.common_line_pairs:
             mean_detection = self.common_line_detection / self.common_line_pairs
-            lines.append(
-                f"Mean time per pair:         {mean_detection:10.6f} s"
-            )
+            lines.append(f"Mean time per pair:         {mean_detection:10.6f} s")
 
         attempted_triplets = self.valid_triplets + self.rejected_triplets
         if attempted_triplets:
@@ -157,20 +154,47 @@ def build_relative_orientations_graph(
         common_line_block_size=common_line_block_size,
     )
 
+    n_images = images.shape[0]
+
+    # Pre-center the full image batch before computing the sinograms
     if precenter:
         start = perf_counter()
         images = precenter_images(images)
         timings.precentering = perf_counter() - start
 
+    # Compute all sinograms
+    start = perf_counter()
+    sinograms = batch_common_line_sinograms(images, theta=theta_array)
+    timings.radon = perf_counter() - start
+
+    # The image batch is no longer needed here
+    del images
+
+    # Detect all pairwise common lines
+    start = perf_counter()
+    common_lines = detect_common_lines_all_pairs_blocked(
+        sinograms, allow_reversed=True, block_size=common_line_block_size
+    )
+    angle_1, angle_2 = common_lines.oriented_angles(theta_array)
+    timings.common_line_detection = perf_counter() - start
+
+    # Sinograms and common line indices are no longer needed once we have the angles
+    del sinograms, common_lines
+
+    # Calculate number of estimated common line pairs and common line block comparisons
+    timings.common_line_pairs = n_images * (n_images - 1)
+    n_blocks = (n_images + common_line_block_size - 1) // common_line_block_size
+    timings.common_line_blocks = (n_blocks * (n_blocks + 1)) // 2
+
+    # Estimate the two handedness candidates for every directed edge
     candidates = _estimate_relative_orientation_candidates(
-        images,
-        theta=theta_array,
+        angle_1,
+        angle_2,
         n_third=n_third,
         random_seed=random_seed,
-        common_line_block_size=common_line_block_size,
         timings=timings,
     )
-    del images
+    del angle_1, angle_2
 
     start = perf_counter()
     graph = _select_consistent_handedness(
@@ -268,43 +292,39 @@ def _validate_pipeline_inputs(
 
 
 def _estimate_relative_orientation_candidates(
-    images: np.ndarray,
+    angle_1: np.ndarray,
+    angle_2: np.ndarray,
     *,
-    theta: np.ndarray,
     n_third: int,
     random_seed: int | None,
-    common_line_block_size: int,
     timings: PipelineTimings,
 ) -> np.ndarray:
     """
     Estimate both handedness candidates for every ordered image pair.
 
-    All common lines are detected and stored before entering the triplet loop.
+    Parameters
+    ----------
+    angle_1, angle_2
+        Oriented common-line angle matrices with shape
+        ``(n_images, n_images)``. For pair ``(i, j)``,
+        ``angle_1[i, j]`` is the common-line angle in image ``i`` and
+        ``angle_2[i, j]`` is the corresponding oriented angle in image ``j``.
+    n_third
+        Maximum number of valid third images used for each ordered pair.
+    random_seed
+        Seed used to randomize the order of candidate third images.
+    timings
+        Timing and counter object updated during triplet reconstruction.
+
+    Returns
+    -------
+    numpy.ndarray
+        Array with shape ``(n_images, n_images, 2, 3, 3)`` containing
+        the two handedness candidates for every directed image pair.
     """
-    n_images = images.shape[0]
+    n_images = angle_1.shape[0]
     image_indices = np.arange(n_images)
     rng = np.random.default_rng(random_seed)
-
-    start = perf_counter()
-    sinograms = batch_common_line_sinograms(images, theta=theta)
-    timings.radon = perf_counter() - start
-
-    start = perf_counter()
-    common_lines = detect_common_lines_all_pairs_blocked(
-        sinograms,
-        allow_reversed=True,
-        block_size=common_line_block_size,
-    )
-    angle_1, angle_2 = common_lines.oriented_angles(theta)
-    timings.common_line_detection = perf_counter() - start
-
-    # These arrays are no longer needed after the oriented angles have been
-    # materialized. Releasing them is useful when many images or angles are used.
-    del sinograms, common_lines
-
-    timings.common_line_pairs = n_images * (n_images - 1)
-    n_blocks = (n_images + common_line_block_size - 1) // common_line_block_size
-    timings.common_line_blocks = n_blocks * (n_blocks + 1) // 2
 
     candidates = np.empty(
         (n_images, n_images, 2, 3, 3),
