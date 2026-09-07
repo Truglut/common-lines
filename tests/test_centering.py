@@ -199,6 +199,23 @@ def test_batched_shift_estimation_matches_per_image(shape):
     np.testing.assert_almost_equal(per_image, batched)
 
 
+def test_small_precentering_case():
+    image = np.zeros((5, 5), dtype=np.float64)
+    center = np.array([2, 2])
+    expected_shift = np.array([1, 1])
+
+    image[tuple(center - expected_shift)] = 1.0
+
+    expected_center = np.zeros((5, 5), dtype=np.float64)
+    expected_center[tuple(center)] = 1.0
+
+    estimated_shift = np.array(estimate_center_shift(image))
+    centered_image = precenter_image(image)
+
+    np.testing.assert_array_equal(estimated_shift, expected_shift)
+    np.testing.assert_array_equal(centered_image, expected_center)
+
+
 def test_invalid_inputs_are_rejected():
     with pytest.raises(ValueError, match="image must have shape"):
         estimate_center_shift(np.zeros((2, 3, 4)))
