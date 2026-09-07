@@ -20,16 +20,67 @@ def _gaussian_particle(
 ) -> np.ndarray:
     """Generate a smooth centered particle with an analytically known center."""
     yy, xx = np.mgrid[:height, :width]
-    center_y = (height - 1) / 2.0 + shift_y
-    center_x = (width - 1) / 2.0 + shift_x
+    center_y = height // 2 + shift_y
+    center_x = width // 2 + shift_x
 
     return np.exp(-0.5 * (((yy - center_y) / 8.0) ** 2 + ((xx - center_x) / 6.0) ** 2))
 
 
+def _asymmetric_particle(
+    height: int,
+    width: int,
+    *,
+    shift_y: float = 0.0,
+    shift_x: float = 0.0,
+) -> np.ndarray:
+    """Generate a smooth particle with no reflection symmetry."""
+    yy, xx = np.mgrid[:height, :width]
+    center_y = height // 2 + shift_y
+    center_x = width // 2 + shift_x
+
+    components = [
+        (1.00, -7.0, -8.0, 3.0, 5.0),
+        (0.75, 5.0, -1.0, 5.0, 2.5),
+        (0.45, 1.5, 8.0, 2.0, 4.0),
+    ]
+
+    image = np.zeros((height, width), dtype=np.float64)
+    for amplitude, dy, dx, sigma_y, sigma_x in components:
+        image += amplitude * np.exp(
+            -0.5
+            * (
+                ((yy - (center_y + dy)) / sigma_y) ** 2
+                + ((xx - (center_x + dx)) / sigma_x) ** 2
+            )
+        )
+
+    return image
+
+
+def _axis_reflection_integer_shift(image: np.ndarray, axis: int) -> float:
+    """Reference the best circular reflection lag without an orthogonal shift."""
+    centered = image - image.mean()
+    reflected = np.flip(centered, axis=axis)
+    size = image.shape[axis]
+
+    indices = np.arange(size)
+    lags = ((indices + size // 2) % size) - size // 2
+    scores = np.array(
+        [
+            np.sum(centered * np.roll(reflected, int(lag), axis=axis))
+            for lag in lags
+        ]
+    )
+
+    best_lag = lags[np.argmax(scores)]
+    pixel_center_offset = size // 2 - (size - 1) / 2.0
+    return -0.5 * best_lag + pixel_center_offset
+
+
 @pytest.mark.parametrize("shape", [(65, 67), (64, 66)])
 def test_centered_particle_has_nearly_zero_shift(shape):
-    # Even and odd image sizes use slightly different pixel-center geometry.
-    # A centered smooth particle should nevertheless need essentially no shift.
+    # The centering target is the same pixel used as the rotation center by
+    # the common-line Radon transform.
     image = _gaussian_particle(*shape)
 
     shift_y, shift_x = estimate_center_shift(image)
@@ -64,44 +115,83 @@ def test_estimated_shift_is_opposite_to_particle_displacement(particle_shift):
     np.testing.assert_allclose(estimated, expected, atol=0.25, rtol=0.0)
 
 
-def test_batch_estimation_handles_different_shifts_together():
-    # This exercises the vectorized batch path rather than repeatedly calling
-    # the scalar wrapper.
-    particle_shifts = np.array(
-        [
-            [0.0, 0.0],
-            [2.0, -4.0],
-            [1.5, -2.5],
-            [-3.25, 4.2],
-        ]
-    )
-    images = np.stack(
-        [
-            _gaussian_particle(64, 66, shift_y=dy, shift_x=dx)
-            for dy, dx in particle_shifts
-        ]
+def test_even_sized_particle_uses_radon_center_pixel():
+    # The Radon implementation rotates an even-sized image around size // 2.
+    # Pre-centering must therefore leave an impulse at that pixel unchanged.
+    image = np.zeros((64, 66), dtype=np.float64)
+    image[32, 33] = 1.0
+
+    estimated = np.array(estimate_center_shift(image))
+    centered = precenter_image(image)
+
+    np.testing.assert_array_equal(estimated, np.zeros(2))
+    np.testing.assert_array_equal(centered, image)
+
+
+def test_asymmetric_particle_translation_changes_estimate_by_opposite_shift():
+    # An asymmetric particle may have an intrinsic reflection-centering bias.
+    # Translating the whole particle should nevertheless change the estimate by
+    # the opposite translation.
+    particle_shift = np.array([3.0, -4.0])
+    reference = _asymmetric_particle(65, 67)
+    translated = _asymmetric_particle(
+        65,
+        67,
+        shift_y=particle_shift[0],
+        shift_x=particle_shift[1],
     )
 
-    estimated = estimate_center_shifts(images)
+    reference_estimate = np.array(estimate_center_shift(reference))
+    translated_estimate = np.array(estimate_center_shift(translated))
 
-    assert estimated.shape == (len(images), 2)
     np.testing.assert_allclose(
-        estimated,
-        -particle_shifts,
-        atol=0.25,
+        translated_estimate - reference_estimate,
+        -particle_shift,
+        atol=0.05,
         rtol=0.0,
     )
 
 
-def test_precentering_removes_most_of_the_residual_shift():
-    # The centering method is deliberately approximate. The important property
-    # is that a clearly displaced particle becomes very nearly centered.
-    image = _gaussian_particle(65, 67, shift_y=3.2, shift_x=-4.4)
+def test_asymmetric_particle_uses_only_axis_aligned_reflection_lags():
+    # This configuration has a different optimum if the reflected image is
+    # allowed to slide along the orthogonal direction. The estimator should
+    # agree with independent 1D circular correlations along each axis instead.
+    height = width = 33
+    yy, xx = np.mgrid[:height, :width]
+    center = height // 2
 
-    centered = precenter_image(image)
-    residual = np.array(estimate_center_shift(centered))
+    components = [
+        (0.90, 7.0, -9.0, 1.6, 2.8),
+        (0.65, -2.5, 6.3, 1.7, 1.5),
+        (1.40, -7.5, 6.5, 1.7, 1.4),
+    ]
 
-    assert np.linalg.norm(residual) < 0.25
+    image = np.zeros((height, width), dtype=np.float64)
+    for amplitude, dy, dx, sigma_y, sigma_x in components:
+        image += amplitude * np.exp(
+            -0.5
+            * (
+                ((yy - (center + dy)) / sigma_y) ** 2
+                + ((xx - (center + dx)) / sigma_x) ** 2
+            )
+        )
+
+    estimated = np.array(estimate_center_shift(image))
+    expected_integer_peak = np.array(
+        [
+            _axis_reflection_integer_shift(image, axis=-2),
+            _axis_reflection_integer_shift(image, axis=-1),
+        ]
+    )
+
+    # Subpixel parabolic refinement can move the estimate by at most half a
+    # pixel from the discrete peak used by the independent reference.
+    np.testing.assert_allclose(
+        estimated,
+        expected_integer_peak,
+        atol=0.5,
+        rtol=0.0,
+    )
 
 
 def test_precentering_is_approximately_idempotent():
@@ -113,20 +203,6 @@ def test_precentering_is_approximately_idempotent():
     twice = precenter_image(once)
 
     np.testing.assert_allclose(twice, once, atol=1.0e-2, rtol=0.0)
-
-
-def test_precenter_images_matches_scalar_precentering():
-    images = np.stack(
-        [
-            _gaussian_particle(65, 67, shift_y=2.0, shift_x=-3.0),
-            _gaussian_particle(65, 67, shift_y=-1.5, shift_x=4.0),
-        ]
-    )
-
-    batch_result = precenter_images(images)
-    scalar_result = np.stack([precenter_image(image) for image in images])
-
-    np.testing.assert_allclose(batch_result, scalar_result, atol=1.0e-12, rtol=0.0)
 
 
 def test_shift_image_uses_y_x_order_and_does_not_wrap():
