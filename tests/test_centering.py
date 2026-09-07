@@ -23,13 +23,7 @@ def _gaussian_particle(
     center_y = (height - 1) / 2.0 + shift_y
     center_x = (width - 1) / 2.0 + shift_x
 
-    return np.exp(
-        -0.5
-        * (
-            ((yy - center_y) / 8.0) ** 2
-            + ((xx - center_x) / 6.0) ** 2
-        )
-    )
+    return np.exp(-0.5 * (((yy - center_y) / 8.0) ** 2 + ((xx - center_x) / 6.0) ** 2))
 
 
 @pytest.mark.parametrize("shape", [(65, 67), (64, 66)])
@@ -186,6 +180,23 @@ def test_constant_image_has_zero_estimated_shift():
     estimated = estimate_center_shifts(images)
 
     np.testing.assert_array_equal(estimated, np.zeros((3, 2)))
+
+
+@pytest.mark.parametrize("shape", [(65, 67), (64, 66)])
+def test_batched_shift_estimation_matches_per_image(shape):
+    n_images = 8
+    images = np.random.normal(0, 1, size=(n_images, *shape))
+
+    per_image = np.zeros(shape=(n_images, 2))
+    for i in range(n_images):
+        shift_y, shift_x = estimate_center_shift(images[i])
+
+        per_image[i, 0] = shift_y
+        per_image[i, 1] = shift_x
+
+    batched = estimate_center_shifts(images)
+
+    np.testing.assert_almost_equal(per_image, batched)
 
 
 def test_invalid_inputs_are_rejected():
