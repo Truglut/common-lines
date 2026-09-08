@@ -29,11 +29,16 @@ def compute_center_of_mass(
     ValueError
         If the total mass of any of the images is close to zero.
     """
+    eps = _validate_eps(eps)
     image = _as_single_image(image)
 
-    row_weights = image.sum(axis=1)  # the y coordinate varies with axis=0
-    col_weights = image.sum(axis=0)  # the x coordinate varies with axis=1
-    total_weights = row_weights.sum()
+    row_weights = image.sum(
+        axis=1, dtype=np.float64
+    )  # the y coordinate varies with axis=0
+    col_weights = image.sum(
+        axis=0, dtype=np.float64
+    )  # the x coordinate varies with axis=1
+    total_weights = row_weights.sum(dtype=np.float64)
 
     if abs(total_weights) < eps:
         raise ValueError("image total intensity is too close to zero")
@@ -68,6 +73,7 @@ def compute_center_of_mass_batch(images: np.ndarray, eps: float = 1.0e-6) -> np.
     ValueError
         If the total mass of any of the images is close to zero.
     """
+    eps = _validate_eps(eps)
     images = _as_image_batch(images)
 
     batch, height, width = images.shape
@@ -94,10 +100,13 @@ def compute_center_of_mass_batch(images: np.ndarray, eps: float = 1.0e-6) -> np.
     return centers
 
 
-def estimate_center_of_mass_shift(image: np.ndarray) -> tuple[float, float]:
-    center_y, center_x = compute_center_of_mass(image)
-
+def estimate_center_of_mass_shift(
+    image: np.ndarray, eps: float = 1.0e-6
+) -> tuple[float, float]:
+    image = _as_single_image(image)
     height, width = image.shape
+
+    center_y, center_x = compute_center_of_mass(image, eps=eps)
 
     return (height // 2 - center_y, width // 2 - center_x)
 
@@ -113,12 +122,23 @@ def estimate_center_of_mass_shifts(
     return geometric_center - centers
 
 
-def precenter_image_center_of_mass(image: np.ndarray) -> np.ndarray:
-    shift_y, shift_x = estimate_center_of_mass_shift(image)
-
+def precenter_image_center_of_mass(
+    image: np.ndarray, eps: float = 1.0e-6
+) -> np.ndarray:
+    image = _as_single_image(image)
+    shift_y, shift_x = estimate_center_of_mass_shift(image, eps=eps)
     return shift_image(image, shift_y, shift_x)
 
 
-def precenter_images_center_of_mass(images: np.ndarray) -> np.ndarray:
-    shifts = estimate_center_of_mass_shifts(images)
+def precenter_images_center_of_mass(
+    images: np.ndarray, eps: float = 1.0e-6
+) -> np.ndarray:
+    images = _as_image_batch(images)
+    shifts = estimate_center_of_mass_shifts(images, eps=eps)
     return shift_images(images, shifts)
+
+
+def _validate_eps(eps: float) -> float:
+    if not np.isfinite(eps) or eps < 0:
+        raise ValueError("eps must be a finite non-negative value.")
+    return float(eps)
