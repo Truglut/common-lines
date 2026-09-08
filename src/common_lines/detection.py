@@ -33,9 +33,7 @@ class CommonLineResult:
     reversed_match: np.ndarray | None = None
 
     def oriented_angles(
-        self,
-        theta_1: np.ndarray,
-        theta_2: np.ndarray
+        self, theta_1: np.ndarray, theta_2: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Convert the stored indices into oriented angular matrices.
@@ -88,7 +86,7 @@ class CommonLineGraph:
         Boolean matrix identifying detector-reversed matches. It is ``None``
         when reversed profiles were not considered.
     n_angles: int, optional
-        Length of the angular array used to compute the sinograms. 
+        Length of the angular array used to compute the sinograms.
         Default is 0 for an empty object.
     """
 
@@ -213,7 +211,6 @@ def detect_common_lines(
             n_angles_2=n_angles_2,
         )
 
-
     return CommonLineResult(
         index_1=selected.index_1,
         index_2=selected.index_2,
@@ -307,7 +304,7 @@ def detect_common_lines_all_pairs_blocked(
             )
             block_reversed = None
 
-            if allow_reversed:
+            if reversed_features is not None:
                 # Detect matches also for the reversed features and keep best match
                 right_reversed = reversed_features[j_start:j_stop].reshape(
                     n_right * n_angles,
@@ -563,6 +560,10 @@ def _store_match_block(
         correlation[i_slice, j_slice] = selected.correlation.T
 
         if reversed_match is not None:
+            if reversed_selected is None:
+                raise ValueError(
+                    "reversed_match and reverse_selected must be provided together"
+                )
             reversed_match[i_slice, j_slice] = reversed_selected.T
         return
 

@@ -1,4 +1,4 @@
-from typing import Iterable
+from typing import Iterable, overload
 
 import numpy as np
 from common_lines.detection import CommonLineResult
@@ -12,6 +12,7 @@ def compute_transformation_matrices(
     common_line_result_12: CommonLineResult,
     common_line_result_13: CommonLineResult,
     common_line_result_23: CommonLineResult,
+    theta: np.ndarray,
     eps: float = 1.0e-6,
 ) -> HandednessPair:
     """
@@ -23,13 +24,16 @@ def compute_transformation_matrices(
 
     Parameters
     ----------
-    common_line_result_12
+    common_line_result_12 : CommonLineResult
         Detected oriented common line between images 1 and 2.
-    common_line_result_13
+    common_line_result_13 : CommonLineResult
         Detected oriented common line between images 1 and 3.
-    common_line_result_23
+    common_line_result_23 : CommonLineResult
         Detected oriented common line between images 2 and 3.
-    eps
+    theta : np.ndarray
+        Angular grid used to generate the sinograms from which the common lines
+        were detected.
+    eps : float, optional
         Numerical tolerance used to reject degenerate or inconsistent triplets.
 
     Returns
@@ -46,22 +50,23 @@ def compute_transformation_matrices(
     physically correct hand without additional information.
     """
     # Extract the angles of the common lines from the results
-    angle_12_in_1 = common_line_result_12.angle_1
-    angle_12_in_2 = common_line_result_12.angle_2
-
-    angle_13_in_1 = common_line_result_13.angle_1
-    angle_13_in_3 = common_line_result_13.angle_2
-
-    angle_23_in_2 = common_line_result_23.angle_1
-    angle_23_in_3 = common_line_result_23.angle_2
+    angle_12_in_1, angle_12_in_2 = common_line_result_12.oriented_angles(
+        theta_1=theta, theta_2=theta
+    )
+    angle_13_in_1, angle_13_in_3 = common_line_result_13.oriented_angles(
+        theta_1=theta, theta_2=theta
+    )
+    angle_23_in_2, angle_23_in_3 = common_line_result_23.oriented_angles(
+        theta_1=theta, theta_2=theta
+    )
 
     return compute_transformation_matrices_from_angles(
-        angle_12_in_1=angle_12_in_1,
-        angle_12_in_2=angle_12_in_2,
-        angle_13_in_1=angle_13_in_1,
-        angle_13_in_3=angle_13_in_3,
-        angle_23_in_2=angle_23_in_2,
-        angle_23_in_3=angle_23_in_3,
+        angle_12_in_1=float(angle_12_in_1),
+        angle_12_in_2=float(angle_12_in_2),
+        angle_13_in_1=float(angle_13_in_1),
+        angle_13_in_3=float(angle_13_in_3),
+        angle_23_in_2=float(angle_23_in_2),
+        angle_23_in_3=float(angle_23_in_3),
         eps=eps,
     )
 
@@ -176,6 +181,16 @@ def compute_transformation_matrices_from_angles(
     mirrored = mirror_transformation_matrices(direct)
 
     return direct, mirrored
+
+
+@overload
+def mirror_transformation_matrices(rotations: RotationTriplet) -> RotationTriplet: ...
+
+
+@overload
+def mirror_transformation_matrices(
+    rotations: Iterable[np.ndarray],
+) -> tuple[np.ndarray, ...]: ...
 
 
 def mirror_transformation_matrices(
