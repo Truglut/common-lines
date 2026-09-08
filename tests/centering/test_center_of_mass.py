@@ -1,6 +1,9 @@
 import numpy as np
 
-from common_lines.centering import estimate_center_of_mass_shift
+from common_lines.centering import (
+    estimate_center_of_mass_shift,
+    estimate_center_of_mass_shifts,
+)
 from common_lines.centering.center_of_mass import (
     compute_center_of_mass,
     compute_center_of_mass_batch,
@@ -59,6 +62,29 @@ def test_compute_center_of_mass_batch_matches_scalar():
     np.testing.assert_allclose(
         batch_centers,
         scalar_centers,
+        atol=1.0e-12,
+        rtol=0.0,
+    )
+
+
+def test_estimate_center_of_mass_shifts_matches_scalar():
+    images = np.zeros((3, 7, 9), dtype=np.float64)
+
+    images[0, 2, 3] = 1.0
+
+    images[1, 1, 2] = 1.0
+    images[1, 5, 6] = 3.0
+
+    images[2, 3, 4] = 2.0
+    images[2, 4, 7] = 1.0
+
+    batch_shifts = estimate_center_of_mass_shifts(images)
+
+    scalar_shifts = np.array([estimate_center_of_mass_shift(image) for image in images])
+
+    np.testing.assert_allclose(
+        batch_shifts,
+        scalar_shifts,
         atol=1.0e-12,
         rtol=0.0,
     )
