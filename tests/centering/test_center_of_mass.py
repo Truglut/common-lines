@@ -1,7 +1,10 @@
 import numpy as np
 
 from common_lines.centering import estimate_center_of_mass_shift
-from common_lines.centering.center_of_mass import compute_center_of_mass
+from common_lines.centering.center_of_mass import (
+    compute_center_of_mass,
+    compute_center_of_mass_batch,
+)
 
 
 def test_compute_center_of_mass_for_known_weighted_pixels():
@@ -33,6 +36,29 @@ def test_center_of_mass_shift_uses_radon_center_convention():
     np.testing.assert_allclose(
         shift,
         (1.0, -1.0),
+        atol=1.0e-12,
+        rtol=0.0,
+    )
+
+
+def test_compute_center_of_mass_batch_matches_scalar():
+    images = np.zeros((3, 7, 9), dtype=np.float64)
+
+    images[0, 2, 3] = 1.0
+
+    images[1, 1, 2] = 1.0
+    images[1, 5, 6] = 3.0
+
+    images[2, 3, 4] = 2.0
+    images[2, 4, 7] = 1.0
+
+    batch_centers = compute_center_of_mass_batch(images)
+
+    scalar_centers = np.array([compute_center_of_mass(image) for image in images])
+
+    np.testing.assert_allclose(
+        batch_centers,
+        scalar_centers,
         atol=1.0e-12,
         rtol=0.0,
     )
