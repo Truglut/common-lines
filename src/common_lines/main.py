@@ -8,7 +8,7 @@ from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
     compute_transformation_matrices_from_angles,
 )
-from common_lines.centering import precenter_images_reflection
+from common_lines.centering import precenter_images, PrecenteringMethod
 from common_lines.detection import detect_common_lines_all_pairs_blocked
 from common_lines.procrustes import nearest_rotation
 from common_lines.radon import batch_common_line_sinograms
@@ -82,7 +82,7 @@ def build_relative_orientations_graph(
     handedness_reference: tuple[int, int] = (0, 1),
     *,
     theta: np.ndarray | None = None,
-    precenter: bool = False,
+    precenter_method: PrecenteringMethod | None = None,
     common_line_block_size: int = 4,
     return_timings: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, PipelineTimings]:
@@ -157,9 +157,9 @@ def build_relative_orientations_graph(
     n_images = images.shape[0]
 
     # Pre-center the full image batch before computing the sinograms
-    if precenter:
+    if precenter_method is not None:
         start = perf_counter()
-        images = precenter_images_reflection(images)
+        images = precenter_images(images, method=precenter_method)
         timings.precentering = perf_counter() - start
 
     # Compute all sinograms

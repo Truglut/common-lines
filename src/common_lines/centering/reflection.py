@@ -95,19 +95,6 @@ def precenter_image_reflection(image: np.ndarray) -> np.ndarray:
     return shift_image(image, shift_y, shift_x)
 
 
-def precenter_images_reflection(images: np.ndarray) -> np.ndarray:
-    """
-    Approximately center a full batch of images.
-
-    Shift estimation and interpolation are both performed in batch. The
-    horizontal and vertical shifts are estimated from the same original input
-    images, and a single 2D translation is then applied to each image.
-    """
-    images = _as_image_batch(images)
-    shifts = estimate_reflection_shifts(images)
-    return shift_images(images, shifts)
-
-
 def _reflection_lag(
     centered: np.ndarray,
     *,

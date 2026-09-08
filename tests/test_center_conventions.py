@@ -2,7 +2,7 @@ import pytest
 
 import numpy as np
 
-from common_lines.centering import precenter_images_reflection
+from common_lines.centering import precenter_image_reflection
 from common_lines.radon import batch_common_line_sinograms
 
 
@@ -11,7 +11,7 @@ def test_precentering_and_radon_use_same_center(size):
     image = np.zeros((size, size), dtype=np.float64)
     image[size // 2 - 2, size // 2 + 3] = 1.0
 
-    centered = precenter_images_reflection(image[None])[0]
+    centered = precenter_image_reflection(image)
     sinogram = batch_common_line_sinograms(
         centered,
         theta=np.array([0.0, 90.0]),

@@ -5,7 +5,6 @@ from common_lines.centering import (
     estimate_reflection_shift,
     estimate_reflection_shifts,
     precenter_image_reflection,
-    precenter_images_reflection,
     shift_image,
     shift_images,
 )
@@ -293,8 +292,8 @@ def test_invalid_inputs_are_rejected():
     with pytest.raises(ValueError, match="image must have shape"):
         estimate_reflection_shift(np.zeros((2, 3, 4)))
 
-    with pytest.raises(ValueError, match="images must have shape"):
-        precenter_images_reflection(np.zeros((32, 32)))
+    with pytest.raises(ValueError, match="image must have shape"):
+        precenter_image_reflection(np.zeros((2, 32, 32)))
 
     with pytest.raises(ValueError, match="shifts must have shape"):
         shift_images(np.zeros((2, 16, 16)), np.zeros((2, 3)))

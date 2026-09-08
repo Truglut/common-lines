@@ -130,14 +130,6 @@ def precenter_image_center_of_mass(
     return shift_image(image, shift_y, shift_x)
 
 
-def precenter_images_center_of_mass(
-    images: np.ndarray, eps: float = 1.0e-6
-) -> np.ndarray:
-    images = _as_image_batch(images)
-    shifts = estimate_center_of_mass_shifts(images, eps=eps)
-    return shift_images(images, shifts)
-
-
 def _validate_eps(eps: float) -> float:
     if not np.isfinite(eps) or eps < 0:
         raise ValueError("eps must be a finite non-negative value.")

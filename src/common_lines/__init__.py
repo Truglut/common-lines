@@ -10,11 +10,11 @@ from common_lines.main import (
     build_relative_orientations_graph,
     mirror_relative_orientations_graph,
 )
-
-from common_lines.centering import precenter_images_reflection
+from common_lines.centering import PrecenteringMethod, precenter_images
 
 __all__ = [
     "build_relative_orientations_graph",
     "mirror_relative_orientations_graph",
-    "precenter_images_reflection",
+    "precenter_images",
+    "PrecenteringMethod",
 ]
