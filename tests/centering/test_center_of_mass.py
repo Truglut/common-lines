@@ -1,0 +1,38 @@
+import numpy as np
+
+from common_lines.centering import estimate_center_of_mass_shift
+from common_lines.centering.center_of_mass import compute_center_of_mass
+
+
+def test_compute_center_of_mass_for_known_weighted_pixels():
+    image = np.zeros((5, 7), dtype=np.float64)
+    image[1, 2] = 1.0
+    image[3, 4] = 3.0
+
+    # for first coordinate (y), center of mass should be (1.0 * 1 + 3.0 * 3) / 4.0 = 10.0 / 4.0 = 2.5
+    # for second coordinate (x), center of mass should be (1.0 * 2 + 3.0 * 4) / 4.0 = 14.0 / 4.0 = 3.5
+    center = compute_center_of_mass(image)
+
+    np.testing.assert_allclose(
+        center,
+        (2.5, 3.5),
+        atol=1.0e-12,
+        rtol=0.0,
+    )
+
+
+def test_center_of_mass_shift_uses_radon_center_convention():
+    image = np.zeros((6, 8), dtype=np.float64)
+    # radon center is (6 // 2, 8 // 2) = (3, 4)
+    image[2, 5] = 1.0
+    # center of mass is (2, 5)
+
+    # estimated shift should be (3, 4) - (2, 5) = (1, -1)
+    shift = estimate_center_of_mass_shift(image)
+
+    np.testing.assert_allclose(
+        shift,
+        (1.0, -1.0),
+        atol=1.0e-12,
+        rtol=0.0,
+    )

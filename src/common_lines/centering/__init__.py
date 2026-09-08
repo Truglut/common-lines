@@ -5,6 +5,11 @@ from .reflection import (
     estimate_reflection_shift,
 )
 
+from .center_of_mass import (
+    precenter_image_center_of_mass,
+    estimate_center_of_mass_shift,
+)
+
 from .shifts import (
     shift_image,
     shift_images,
