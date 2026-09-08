@@ -2,11 +2,17 @@ import numpy as np
 
 from ._validation import _as_single_image, _as_image_batch
 
-from .shifts import shift_image, shift_images
+from .shifts import shift_image
+from .preprocessing import preprocess_images
 
 
 def compute_center_of_mass(
-    image: np.ndarray, eps: float = 1.0e-6
+    image: np.ndarray,
+    eps: float = 1.0e-6,
+    mask: np.ndarray | None = None,
+    subtract_background: bool = False,
+    background_mask: np.ndarray | None = None,
+    clip_negative: bool = False,
 ) -> tuple[float, float]:
     """
     Calculates the center of mass of the given image. Returns it as a tuple with
@@ -18,6 +24,9 @@ def compute_center_of_mass(
         Image to compute the center of mass for. Should be an array of shape ``(h, w)``.
     eps : float, optional
         Numerical tolerance to avoid division by zero, by default 1.0e-6
+    mask, subtract_background, background_mask, clip_negative
+        Parameters for ``preprocess_images``. See ``preprocess_images`` for more
+        information.
 
     Returns
     -------
@@ -32,24 +41,38 @@ def compute_center_of_mass(
     eps = _validate_eps(eps)
     image = _as_single_image(image)
 
-    row_weights = image.sum(
-        axis=1, dtype=np.float64
-    )  # the y coordinate varies with axis=0
-    col_weights = image.sum(
-        axis=0, dtype=np.float64
-    )  # the x coordinate varies with axis=1
+    processed = preprocess_images(
+        image[None],
+        mask=mask,
+        subtract_background=subtract_background,
+        background_mask=background_mask,
+        clip_negative=clip_negative,
+    )[0]
+
+    # Varying axis 1 (columns) gives weight for each row
+    row_weights = processed.sum(axis=1, dtype=np.float64)
+    col_weights = processed.sum(axis=0, dtype=np.float64)
+
     total_weights = row_weights.sum(dtype=np.float64)
 
     if abs(total_weights) < eps:
         raise ValueError("image total intensity is too close to zero")
 
-    weighted_y = np.dot(row_weights, np.arange(image.shape[0], dtype=np.float64))
-    weighted_x = np.dot(col_weights, np.arange(image.shape[1], dtype=np.float64))
+    weighted_y = np.dot(row_weights, np.arange(processed.shape[0], dtype=np.float64))
+    weighted_x = np.dot(col_weights, np.arange(processed.shape[1], dtype=np.float64))
 
     return (float(weighted_y / total_weights), float(weighted_x / total_weights))
 
 
-def compute_center_of_mass_batch(images: np.ndarray, eps: float = 1.0e-6) -> np.ndarray:
+def compute_center_of_mass_batch(
+    images: np.ndarray,
+    *,
+    eps: float = 1.0e-6,
+    mask: np.ndarray | None = None,
+    subtract_background: bool = False,
+    background_mask: np.ndarray | None = None,
+    clip_negative: bool = False,
+) -> np.ndarray:
     """
     Computes the center of mass for each of the images in a batch. Returns an
     array of shape ``(batch, 2)`` containing the coordinates for these centers.
@@ -60,6 +83,9 @@ def compute_center_of_mass_batch(images: np.ndarray, eps: float = 1.0e-6) -> np.
         Image batch, array of shape ``(batch, height, width)``.
     eps : float, optional
         Numerical tolerance to avoid division by zero, by default 1.0e-6
+    mask, subtract_background, background_mask, clip_negative
+        Parameters for ``preprocess_images``. See ``preprocess_images`` for more
+        information.
 
     Returns
     -------
@@ -76,11 +102,19 @@ def compute_center_of_mass_batch(images: np.ndarray, eps: float = 1.0e-6) -> np.
     eps = _validate_eps(eps)
     images = _as_image_batch(images)
 
-    batch, height, width = images.shape
+    processed = preprocess_images(
+        images,
+        mask=mask,
+        subtract_background=subtract_background,
+        background_mask=background_mask,
+        clip_negative=clip_negative,
+    )
+
+    batch, height, width = processed.shape
 
     # first coordinate is batch, second is y, third is x
-    row_weights = images.sum(axis=-1, dtype=np.float64)
-    col_weights = images.sum(axis=-2, dtype=np.float64)
+    row_weights = processed.sum(axis=-1, dtype=np.float64)
+    col_weights = processed.sum(axis=-2, dtype=np.float64)
     total_weights = row_weights.sum(axis=-1, dtype=np.float64)
 
     if np.any(np.abs(total_weights) < eps):
