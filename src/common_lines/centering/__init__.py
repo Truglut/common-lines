@@ -7,7 +7,9 @@ from .reflection import (
 
 from .center_of_mass import (
     precenter_image_center_of_mass,
+    precenter_images_center_of_mass,
     estimate_center_of_mass_shift,
+    estimate_center_of_mass_shifts,
 )
 
 from .shifts import (

@@ -2,7 +2,7 @@ import numpy as np
 
 from ._validation import _as_single_image, _as_image_batch
 
-from .shifts import shift_image
+from .shifts import shift_image, shift_images
 
 
 def compute_center_of_mass(
@@ -102,7 +102,23 @@ def estimate_center_of_mass_shift(image: np.ndarray) -> tuple[float, float]:
     return (height // 2 - center_y, width // 2 - center_x)
 
 
+def estimate_center_of_mass_shifts(
+    images: np.ndarray, eps: float = 1.0e-6
+) -> np.ndarray:
+    images = _as_image_batch(images)
+
+    centers = compute_center_of_mass_batch(images, eps=eps)
+    geometric_center = np.array([images.shape[1] // 2, images.shape[2] // 2])
+
+    return geometric_center - centers
+
+
 def precenter_image_center_of_mass(image: np.ndarray) -> np.ndarray:
     shift_y, shift_x = estimate_center_of_mass_shift(image)
 
     return shift_image(image, shift_y, shift_x)
+
+
+def precenter_images_center_of_mass(images: np.ndarray) -> np.ndarray:
+    shifts = estimate_center_of_mass_shifts(images)
+    return shift_images(images, shifts)
