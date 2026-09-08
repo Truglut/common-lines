@@ -4,9 +4,17 @@ import numpy as np
 
 from common_lines.centering._validation import _as_image_batch, _as_single_image
 from common_lines.centering.shifts import shift_image, shift_images
+from .preprocessing import preprocess_images
 
 
-def estimate_reflection_shift(image: np.ndarray) -> tuple[float, float]:
+def estimate_reflection_shift(
+    image: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    subtract_background: bool = False,
+    background_mask: np.ndarray | None = None,
+    clip_negative: bool = False,
+) -> tuple[float, float]:
     """
     Estimate the translational correction that approximately centers one image.
 
@@ -21,6 +29,9 @@ def estimate_reflection_shift(image: np.ndarray) -> tuple[float, float]:
     ----------
     image
         Real-valued image with shape ``(height, width)``.
+    mask, subtract_background, background_mask, clip_negative
+        Parameters for ``preprocess_images``. See ``preprocess_images`` for more
+        information.
 
     Returns
     -------
@@ -39,11 +50,24 @@ def estimate_reflection_shift(image: np.ndarray) -> tuple[float, float]:
     of the image size along an axis become ambiguous.
     """
     image = _as_single_image(image)
-    shift = estimate_reflection_shifts(image[None, ...])[0]
+    shift = estimate_reflection_shifts(
+        image[None, ...],
+        mask=mask,
+        subtract_background=subtract_background,
+        background_mask=background_mask,
+        clip_negative=clip_negative,
+    )[0]
     return float(shift[0]), float(shift[1])
 
 
-def estimate_reflection_shifts(images: np.ndarray) -> np.ndarray:
+def estimate_reflection_shifts(
+    images: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    subtract_background: bool = False,
+    background_mask: np.ndarray | None = None,
+    clip_negative: bool = False,
+) -> np.ndarray:
     """
     Estimate centering corrections for a batch of images.
 
@@ -55,6 +79,9 @@ def estimate_reflection_shifts(images: np.ndarray) -> np.ndarray:
     ----------
     images
         Real-valued array with shape ``(batch, height, width)``.
+    mask, subtract_background, background_mask, clip_negative
+        Parameters for ``preprocess_images``. See ``preprocess_images`` for more
+        information.
 
     Returns
     -------
@@ -66,9 +93,17 @@ def estimate_reflection_shifts(images: np.ndarray) -> np.ndarray:
     images = _as_image_batch(images)
     batch_size = images.shape[0]
 
+    processed = preprocess_images(
+        images,
+        mask=mask,
+        subtract_background=subtract_background,
+        background_mask=background_mask,
+        clip_negative=clip_negative,
+    )
+
     # Removing the DC component prevents a constant background from dominating
     # the correlation with the reflected images.
-    centered = images - images.mean(axis=(-2, -1), keepdims=True)
+    centered = processed - processed.mean(axis=(-2, -1), keepdims=True)
 
     # Estimate each component independently from the original images. For the
     # left-right reflection, only horizontal lags are allowed; for the up-down
