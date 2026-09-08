@@ -8,7 +8,7 @@ from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
     compute_transformation_matrices_from_angles,
 )
-from common_lines.centering import precenter_images
+from common_lines.centering import precenter_images_reflection
 from common_lines.detection import detect_common_lines_all_pairs_blocked
 from common_lines.procrustes import nearest_rotation
 from common_lines.radon import batch_common_line_sinograms
@@ -159,7 +159,7 @@ def build_relative_orientations_graph(
     # Pre-center the full image batch before computing the sinograms
     if precenter:
         start = perf_counter()
-        images = precenter_images(images)
+        images = precenter_images_reflection(images)
         timings.precentering = perf_counter() - start
 
     # Compute all sinograms

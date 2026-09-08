@@ -2,10 +2,10 @@ import numpy as np
 import pytest
 
 from common_lines.centering import (
-    estimate_center_shift,
-    estimate_center_shifts,
-    precenter_image,
-    precenter_images,
+    estimate_reflection_shift,
+    estimate_reflection_shifts,
+    precenter_image_reflection,
+    precenter_images_reflection,
     shift_image,
     shift_images,
 )
@@ -66,10 +66,7 @@ def _axis_reflection_integer_shift(image: np.ndarray, axis: int) -> float:
     indices = np.arange(size)
     lags = ((indices + size // 2) % size) - size // 2
     scores = np.array(
-        [
-            np.sum(centered * np.roll(reflected, int(lag), axis=axis))
-            for lag in lags
-        ]
+        [np.sum(centered * np.roll(reflected, int(lag), axis=axis)) for lag in lags]
     )
 
     best_lag = lags[np.argmax(scores)]
@@ -83,7 +80,7 @@ def test_centered_particle_has_nearly_zero_shift(shape):
     # the common-line Radon transform.
     image = _gaussian_particle(*shape)
 
-    shift_y, shift_x = estimate_center_shift(image)
+    shift_y, shift_x = estimate_reflection_shift(image)
 
     assert abs(shift_y) < 0.1
     assert abs(shift_x) < 0.1
@@ -109,7 +106,7 @@ def test_estimated_shift_is_opposite_to_particle_displacement(particle_shift):
         shift_x=particle_shift[1],
     )
 
-    estimated = np.array(estimate_center_shift(image))
+    estimated = np.array(estimate_reflection_shift(image))
     expected = -np.array(particle_shift)
 
     np.testing.assert_allclose(estimated, expected, atol=0.25, rtol=0.0)
@@ -121,8 +118,8 @@ def test_even_sized_particle_uses_radon_center_pixel():
     image = np.zeros((64, 66), dtype=np.float64)
     image[32, 33] = 1.0
 
-    estimated = np.array(estimate_center_shift(image))
-    centered = precenter_image(image)
+    estimated = np.array(estimate_reflection_shift(image))
+    centered = precenter_image_reflection(image)
 
     np.testing.assert_array_equal(estimated, np.zeros(2))
     np.testing.assert_array_equal(centered, image)
@@ -141,8 +138,8 @@ def test_asymmetric_particle_translation_changes_estimate_by_opposite_shift():
         shift_x=particle_shift[1],
     )
 
-    reference_estimate = np.array(estimate_center_shift(reference))
-    translated_estimate = np.array(estimate_center_shift(translated))
+    reference_estimate = np.array(estimate_reflection_shift(reference))
+    translated_estimate = np.array(estimate_reflection_shift(translated))
 
     np.testing.assert_allclose(
         translated_estimate - reference_estimate,
@@ -176,7 +173,7 @@ def test_asymmetric_particle_uses_only_axis_aligned_reflection_lags():
             )
         )
 
-    estimated = np.array(estimate_center_shift(image))
+    estimated = np.array(estimate_reflection_shift(image))
     expected_integer_peak = np.array(
         [
             _axis_reflection_integer_shift(image, axis=-2),
@@ -199,8 +196,8 @@ def test_precentering_is_approximately_idempotent():
     # additional correction once the first pass has centered the particle.
     image = _gaussian_particle(65, 67, shift_y=-2.7, shift_x=3.6)
 
-    once = precenter_image(image)
-    twice = precenter_image(once)
+    once = precenter_image_reflection(image)
+    twice = precenter_image_reflection(once)
 
     np.testing.assert_allclose(twice, once, atol=1.0e-2, rtol=0.0)
 
@@ -238,7 +235,7 @@ def test_estimation_is_reasonably_robust_to_noise():
     image = _gaussian_particle(65, 67, shift_y=2.5, shift_x=-3.5)
     image = image + rng.normal(scale=0.08, size=image.shape)
 
-    estimated = np.array(estimate_center_shift(image))
+    estimated = np.array(estimate_reflection_shift(image))
 
     np.testing.assert_allclose(
         estimated,
@@ -253,7 +250,7 @@ def test_constant_image_has_zero_estimated_shift():
     # stable and harmless default for this degenerate case.
     images = np.ones((3, 32, 34), dtype=np.float32)
 
-    estimated = estimate_center_shifts(images)
+    estimated = estimate_reflection_shifts(images)
 
     np.testing.assert_array_equal(estimated, np.zeros((3, 2)))
 
@@ -265,12 +262,12 @@ def test_batched_shift_estimation_matches_per_image(shape):
 
     per_image = np.zeros(shape=(n_images, 2))
     for i in range(n_images):
-        shift_y, shift_x = estimate_center_shift(images[i])
+        shift_y, shift_x = estimate_reflection_shift(images[i])
 
         per_image[i, 0] = shift_y
         per_image[i, 1] = shift_x
 
-    batched = estimate_center_shifts(images)
+    batched = estimate_reflection_shifts(images)
 
     np.testing.assert_almost_equal(per_image, batched)
 
@@ -285,8 +282,8 @@ def test_small_precentering_case():
     expected_center = np.zeros((5, 5), dtype=np.float64)
     expected_center[tuple(center)] = 1.0
 
-    estimated_shift = np.array(estimate_center_shift(image))
-    centered_image = precenter_image(image)
+    estimated_shift = np.array(estimate_reflection_shift(image))
+    centered_image = precenter_image_reflection(image)
 
     np.testing.assert_array_equal(estimated_shift, expected_shift)
     np.testing.assert_array_equal(centered_image, expected_center)
@@ -294,10 +291,10 @@ def test_small_precentering_case():
 
 def test_invalid_inputs_are_rejected():
     with pytest.raises(ValueError, match="image must have shape"):
-        estimate_center_shift(np.zeros((2, 3, 4)))
+        estimate_reflection_shift(np.zeros((2, 3, 4)))
 
     with pytest.raises(ValueError, match="images must have shape"):
-        precenter_images(np.zeros((32, 32)))
+        precenter_images_reflection(np.zeros((32, 32)))
 
     with pytest.raises(ValueError, match="shifts must have shape"):
         shift_images(np.zeros((2, 16, 16)), np.zeros((2, 3)))
@@ -305,4 +302,4 @@ def test_invalid_inputs_are_rejected():
     bad = np.zeros((1, 16, 16))
     bad[0, 0, 0] = np.nan
     with pytest.raises(ValueError, match="finite"):
-        estimate_center_shifts(bad)
+        estimate_reflection_shifts(bad)
