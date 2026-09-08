@@ -135,32 +135,70 @@ def compute_center_of_mass_batch(
 
 
 def estimate_center_of_mass_shift(
-    image: np.ndarray, eps: float = 1.0e-6
+    image: np.ndarray,
+    *,
+    eps: float = 1.0e-6,
+    mask: np.ndarray | None = None,
+    subtract_background: bool = False,
+    background_mask: np.ndarray | None = None,
+    clip_negative: bool = False,
 ) -> tuple[float, float]:
     image = _as_single_image(image)
     height, width = image.shape
 
-    center_y, center_x = compute_center_of_mass(image, eps=eps)
+    center_y, center_x = compute_center_of_mass(
+        image,
+        eps=eps,
+        mask=mask,
+        subtract_background=subtract_background,
+        background_mask=background_mask,
+        clip_negative=clip_negative,
+    )
 
     return (height // 2 - center_y, width // 2 - center_x)
 
 
 def estimate_center_of_mass_shifts(
-    images: np.ndarray, eps: float = 1.0e-6
+    images: np.ndarray,
+    *,
+    eps: float = 1.0e-6,
+    mask: np.ndarray | None = None,
+    subtract_background: bool = False,
+    background_mask: np.ndarray | None = None,
+    clip_negative: bool = False,
 ) -> np.ndarray:
     images = _as_image_batch(images)
 
-    centers = compute_center_of_mass_batch(images, eps=eps)
+    centers = compute_center_of_mass_batch(
+        images,
+        eps=eps,
+        mask=mask,
+        subtract_background=subtract_background,
+        background_mask=background_mask,
+        clip_negative=clip_negative,
+    )
     geometric_center = np.array([images.shape[1] // 2, images.shape[2] // 2])
 
     return geometric_center - centers
 
 
 def precenter_image_center_of_mass(
-    image: np.ndarray, eps: float = 1.0e-6
+    image: np.ndarray,
+    eps: float = 1.0e-6,
+    mask: np.ndarray | None = None,
+    subtract_background: bool = False,
+    background_mask: np.ndarray | None = None,
+    clip_negative: bool = False,
 ) -> np.ndarray:
     image = _as_single_image(image)
-    shift_y, shift_x = estimate_center_of_mass_shift(image, eps=eps)
+    shift_y, shift_x = estimate_center_of_mass_shift(
+        image,
+        eps=eps,
+        mask=mask,
+        subtract_background=subtract_background,
+        background_mask=background_mask,
+        clip_negative=clip_negative,
+    )
     return shift_image(image, shift_y, shift_x)
 
 

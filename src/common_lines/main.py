@@ -77,14 +77,18 @@ class PipelineTimings:
 
 def build_relative_orientations_graph(
     images: np.ndarray,
+    *,
     n_third: int = 1,
     random_seed: int | None = None,
     handedness_reference: tuple[int, int] = (0, 1),
-    *,
     theta: np.ndarray | None = None,
     precenter_method: PrecenteringMethod | None = None,
     common_line_block_size: int = 4,
     return_timings: bool = False,
+    precenter_mask: np.ndarray | None = None,
+    precenter_subtract_background: bool = False,
+    precenter_background_mask: np.ndarray | None = None,
+    precenter_clip_negative: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, PipelineTimings]:
     """
     Build a graph of relative 3D orientations between all image pairs.
@@ -125,6 +129,9 @@ def build_relative_orientations_graph(
         detection. Larger values may improve throughput but require more memory.
     return_timings
         If True, also return a ``PipelineTimings`` instance.
+    precenter_mask, precenter_subtract_background, precenter_background_mask, precenter_clip_negative
+        Parameters for the preprocessing done before precentering.
+        See ``centering.preprocessing.preprocess_images`` for more information.
 
     Returns
     -------
@@ -159,7 +166,14 @@ def build_relative_orientations_graph(
     # Pre-center the full image batch before computing the sinograms
     if precenter_method is not None:
         start = perf_counter()
-        images = precenter_images(images, method=precenter_method)
+        images = precenter_images(
+            images,
+            method=precenter_method,
+            mask=precenter_mask,
+            subtract_background=precenter_subtract_background,
+            background_mask=precenter_background_mask,
+            clip_negative=precenter_clip_negative,
+        )
         timings.precentering = perf_counter() - start
 
     # Compute all sinograms
