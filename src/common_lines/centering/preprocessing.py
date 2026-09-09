@@ -61,9 +61,11 @@ def preprocess_images(
                 "but background_mask is None"
             )
 
-        background = images * background_mask
-        background_mass = background_mask.sum()
-        background_level = background.sum() / background_mass
+        background = processed * background_mask
+        background_mass = background_mask.sum(axis=(-2, -1), keepdims=True)
+        background_level = (
+            background.sum(axis=(-2, -1), keepdims=True) / background_mass
+        )
 
         processed -= background_level
 
