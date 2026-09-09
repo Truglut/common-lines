@@ -3,16 +3,13 @@ import numpy as np
 from ._validation import _as_single_image, _as_image_batch
 
 from .shifts import shift_image
-from .preprocessing import preprocess_images
+from .preprocessing import preprocess_images, PreprocessingOptions
 
 
 def compute_center_of_mass(
     image: np.ndarray,
     eps: float = 1.0e-6,
-    mask: np.ndarray | None = None,
-    subtract_background: bool = False,
-    background_mask: np.ndarray | None = None,
-    clip_negative: bool = False,
+    preprocessing_options: PreprocessingOptions | None = None,
 ) -> tuple[float, float]:
     """
     Calculates the center of mass of the given image. Returns it as a tuple with
@@ -24,9 +21,9 @@ def compute_center_of_mass(
         Image to compute the center of mass for. Should be an array of shape ``(h, w)``.
     eps : float, optional
         Numerical tolerance to avoid division by zero, by default 1.0e-6
-    mask, subtract_background, background_mask, clip_negative
-        Parameters for ``preprocess_images``. See ``preprocess_images`` for more
-        information.
+    preprocessing_options : PreprocessingOptions
+        Parameters for ``preprocess_images``. See ``PreprocessingOptions``
+        for more information.
 
     Returns
     -------
@@ -41,13 +38,7 @@ def compute_center_of_mass(
     eps = _validate_eps(eps)
     image = _as_single_image(image)
 
-    processed = preprocess_images(
-        image[None],
-        mask=mask,
-        subtract_background=subtract_background,
-        background_mask=background_mask,
-        clip_negative=clip_negative,
-    )[0]
+    processed = preprocess_images(image[None], options=preprocessing_options)[0]
 
     # Varying axis 1 (columns) gives weight for each row
     row_weights = processed.sum(axis=1, dtype=np.float64)
@@ -68,10 +59,7 @@ def compute_center_of_mass_batch(
     images: np.ndarray,
     *,
     eps: float = 1.0e-6,
-    mask: np.ndarray | None = None,
-    subtract_background: bool = False,
-    background_mask: np.ndarray | None = None,
-    clip_negative: bool = False,
+    preprocessing_options: PreprocessingOptions | None = None,
 ) -> np.ndarray:
     """
     Computes the center of mass for each of the images in a batch. Returns an
@@ -83,9 +71,9 @@ def compute_center_of_mass_batch(
         Image batch, array of shape ``(batch, height, width)``.
     eps : float, optional
         Numerical tolerance to avoid division by zero, by default 1.0e-6
-    mask, subtract_background, background_mask, clip_negative
-        Parameters for ``preprocess_images``. See ``preprocess_images`` for more
-        information.
+    preprocessing_options : PreprocessingOptions
+        Parameters for ``preprocess_images``. See ``PreprocessingOptions``
+        for more information.
 
     Returns
     -------
@@ -102,13 +90,7 @@ def compute_center_of_mass_batch(
     eps = _validate_eps(eps)
     images = _as_image_batch(images)
 
-    processed = preprocess_images(
-        images,
-        mask=mask,
-        subtract_background=subtract_background,
-        background_mask=background_mask,
-        clip_negative=clip_negative,
-    )
+    processed = preprocess_images(images, options=preprocessing_options)
 
     batch, height, width = processed.shape
 
@@ -138,21 +120,13 @@ def estimate_center_of_mass_shift(
     image: np.ndarray,
     *,
     eps: float = 1.0e-6,
-    mask: np.ndarray | None = None,
-    subtract_background: bool = False,
-    background_mask: np.ndarray | None = None,
-    clip_negative: bool = False,
+    preprocessing_options: PreprocessingOptions | None = None,
 ) -> tuple[float, float]:
     image = _as_single_image(image)
     height, width = image.shape
 
     center_y, center_x = compute_center_of_mass(
-        image,
-        eps=eps,
-        mask=mask,
-        subtract_background=subtract_background,
-        background_mask=background_mask,
-        clip_negative=clip_negative,
+        image, eps=eps, preprocessing_options=preprocessing_options
     )
 
     return (height // 2 - center_y, width // 2 - center_x)
@@ -162,20 +136,12 @@ def estimate_center_of_mass_shifts(
     images: np.ndarray,
     *,
     eps: float = 1.0e-6,
-    mask: np.ndarray | None = None,
-    subtract_background: bool = False,
-    background_mask: np.ndarray | None = None,
-    clip_negative: bool = False,
+    preprocessing_options: PreprocessingOptions | None = None,
 ) -> np.ndarray:
     images = _as_image_batch(images)
 
     centers = compute_center_of_mass_batch(
-        images,
-        eps=eps,
-        mask=mask,
-        subtract_background=subtract_background,
-        background_mask=background_mask,
-        clip_negative=clip_negative,
+        images, eps=eps, preprocessing_options=preprocessing_options
     )
     geometric_center = np.array([images.shape[1] // 2, images.shape[2] // 2])
 
@@ -185,19 +151,11 @@ def estimate_center_of_mass_shifts(
 def precenter_image_center_of_mass(
     image: np.ndarray,
     eps: float = 1.0e-6,
-    mask: np.ndarray | None = None,
-    subtract_background: bool = False,
-    background_mask: np.ndarray | None = None,
-    clip_negative: bool = False,
+    preprocessing_options: PreprocessingOptions | None = None,
 ) -> np.ndarray:
     image = _as_single_image(image)
     shift_y, shift_x = estimate_center_of_mass_shift(
-        image,
-        eps=eps,
-        mask=mask,
-        subtract_background=subtract_background,
-        background_mask=background_mask,
-        clip_negative=clip_negative,
+        image, eps=eps, preprocessing_options=preprocessing_options
     )
     return shift_image(image, shift_y, shift_x)
 

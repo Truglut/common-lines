@@ -1,25 +1,19 @@
+from dataclasses import dataclass
+
 import numpy as np
 
 
-def preprocess_images(
-    images: np.ndarray,
-    *,
-    mask: np.ndarray | None = None,
-    subtract_background: bool = False,
-    background_mask: np.ndarray | None = None,
-    clip_negative: bool = False,
-) -> np.ndarray:
+@dataclass
+class PreprocessingOptions:
     """
-    Preprocess an image batch.
+    Options used for preprocessing before centering particles
 
-    Parameters
+    Attributes
     ----------
-    images : np.ndarray
-        Image batch, array of shape ``(batch, height, width)``.
     mask : np.ndarray, optional
         Mask that determines the contribution of each part of the images to the
         center of mass calculation.
-        It can be an array of shape ``(batch, height, width)`` containing an 
+        It can be an array of shape ``(batch, height, width)`` containing an
         individual mask for each image, or shape ``(height, width)`` to use the
         same mask for every image.
         Its elements should be floating point numbers between 0 and 1.
@@ -30,7 +24,7 @@ def preprocess_images(
     subtract_background : bool, optional
         If True, the background level will be estimated for every image using
         the average image value in ``background_mask``, or the average value in
-        ``1.0 - mask`` if ``background_mask`` is not provided. This background 
+        ``1.0 - mask`` if ``background_mask`` is not provided. This background
         level will then be subtracted from the images before computing the centers
         of mass.
         Default is False.
@@ -39,22 +33,47 @@ def preprocess_images(
     clip_negative : bool, optional
         If True, any negative values in the images will be clipped to zero.
         Default is False.
+    """
+
+    mask: np.ndarray | None = None
+    subtract_background: bool = False
+    background_mask: np.ndarray | None = None
+    clip_negative: bool = False
+
+
+def preprocess_images(
+    images: np.ndarray, options: PreprocessingOptions | None = None
+) -> np.ndarray:
+    """
+    Preprocess an image batch.
+
+    Parameters
+    ----------
+    images : np.ndarray
+        Image batch, array of shape ``(batch, height, width)``.
+    options : PreprocessingOptions, optional
+        Object containing the different options used in preprocessing.
+        See ``PreprocessingOptions`` for more information.
+        If not provided, no preprocessing will be done to the images.
 
     Returns
     -------
     np.ndarray
         Preprocessed images.
     """
+    processed = images.astype(dtype=np.float64, copy=True)
+
+    if options is None:
+        return processed
+
     background_mask = _get_background_mask(
-        mask=mask,
-        subtract_background=subtract_background,
-        background_mask=background_mask,
+        mask=options.mask,
+        subtract_background=options.subtract_background,
+        background_mask=options.background_mask,
         image_batch_shape=images.shape,
     )
 
-    processed = images.astype(dtype=np.float64, copy=True)
-
-    if subtract_background:
+    if options.subtract_background:
         if background_mask is None:
             raise ValueError(
                 "Background mask extraction failed: subtract_background was requested "
@@ -69,11 +88,11 @@ def preprocess_images(
 
         processed -= background_level
 
-    if clip_negative:
+    if options.clip_negative:
         np.maximum(processed, 0.0, out=processed)
 
-    if mask is not None:
-        mask = _prepare_mask(mask, image_batch_shape=images.shape)
+    if options.mask is not None:
+        mask = _prepare_mask(options.mask, image_batch_shape=images.shape)
         processed *= mask
 
     return processed

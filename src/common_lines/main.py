@@ -9,6 +9,7 @@ from common_lines.alignment import (
     compute_transformation_matrices_from_angles,
 )
 from common_lines.centering import precenter_images, PrecenteringMethod
+from common_lines.centering.preprocessing import PreprocessingOptions
 from common_lines.detection import detect_common_lines_all_pairs_blocked
 from common_lines.procrustes import nearest_rotation
 from common_lines.radon import batch_common_line_sinograms
@@ -85,10 +86,7 @@ def build_relative_orientations_graph(
     precenter_method: PrecenteringMethod | None = None,
     common_line_block_size: int = 4,
     return_timings: bool = False,
-    precenter_mask: np.ndarray | None = None,
-    precenter_subtract_background: bool = False,
-    precenter_background_mask: np.ndarray | None = None,
-    precenter_clip_negative: bool = False,
+    preprocessing_options: PreprocessingOptions | None = None,
 ) -> np.ndarray | tuple[np.ndarray, PipelineTimings]:
     """
     Build a graph of relative 3D orientations between all image pairs.
@@ -129,9 +127,9 @@ def build_relative_orientations_graph(
         detection. Larger values may improve throughput but require more memory.
     return_timings
         If True, also return a ``PipelineTimings`` instance.
-    precenter_mask, precenter_subtract_background, precenter_background_mask, precenter_clip_negative
-        Parameters for the preprocessing done before precentering.
-        See ``centering.preprocessing.preprocess_images`` for more information.
+    preprocessing_options : PreprocessingOptions, optional
+        Parameters for ``preprocess_images``. See ``PreprocessingOptions``
+        for more information.
 
     Returns
     -------
@@ -167,12 +165,7 @@ def build_relative_orientations_graph(
     if precenter_method is not None:
         start = perf_counter()
         images = precenter_images(
-            images,
-            method=precenter_method,
-            mask=precenter_mask,
-            subtract_background=precenter_subtract_background,
-            background_mask=precenter_background_mask,
-            clip_negative=precenter_clip_negative,
+            images, method=precenter_method, preprocessing_options=preprocessing_options
         )
         timings.precentering = perf_counter() - start
 
