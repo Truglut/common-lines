@@ -1,6 +1,4 @@
 import itertools
-from dataclasses import dataclass
-from time import perf_counter
 
 import numpy as np
 
@@ -17,65 +15,6 @@ from common_lines.radon import batch_common_line_sinograms
 DEFAULT_THETA = np.arange(0.0, 180.0, 0.5)
 
 
-@dataclass
-class PipelineTimings:
-    """Execution times and counters for the common-lines pipeline."""
-
-    precentering: float = 0.0
-    radon: float = 0.0
-    common_line_detection: float = 0.0
-    triplet_reconstruction: float = 0.0
-    branch_averaging: float = 0.0
-    handedness_selection: float = 0.0
-    total: float = 0.0
-
-    common_line_pairs: int = 0
-    common_line_blocks: int = 0
-    valid_triplets: int = 0
-    rejected_triplets: int = 0
-
-    def report(self) -> str:
-        """Return a readable timing summary."""
-        measured = (
-            self.precentering
-            + self.radon
-            + self.common_line_detection
-            + self.triplet_reconstruction
-            + self.branch_averaging
-            + self.handedness_selection
-        )
-        other = max(self.total - measured, 0.0)
-
-        lines = [
-            "Common-lines pipeline timing",
-            "----------------------------",
-            f"Total:                     {self.total:10.3f} s",
-            f"Pre-centering:             {self.precentering:10.3f} s",
-            f"Radon transforms:          {self.radon:10.3f} s",
-            f"Common-line detection:     {self.common_line_detection:10.3f} s",
-            f"Triplet reconstruction:    {self.triplet_reconstruction:10.3f} s",
-            f"Branch averaging:          {self.branch_averaging:10.3f} s",
-            f"Handedness selection:      {self.handedness_selection:10.3f} s",
-            f"Other Python overhead:     {other:10.3f} s",
-            "",
-            f"Directed common-line pairs:{self.common_line_pairs:10d}",
-            f"Correlation blocks:        {self.common_line_blocks:10d}",
-            f"Valid triplets:            {self.valid_triplets:10d}",
-            f"Rejected triplets:         {self.rejected_triplets:10d}",
-        ]
-
-        if self.common_line_pairs:
-            mean_detection = self.common_line_detection / self.common_line_pairs
-            lines.append(f"Mean time per pair:         {mean_detection:10.6f} s")
-
-        attempted_triplets = self.valid_triplets + self.rejected_triplets
-        if attempted_triplets:
-            rejection_rate = self.rejected_triplets / attempted_triplets
-            lines.append(f"Triplet rejection rate:    {rejection_rate:10.1%}")
-
-        return "\n".join(lines)
-
-
 def build_relative_orientations_graph(
     images: np.ndarray,
     *,
@@ -85,9 +24,8 @@ def build_relative_orientations_graph(
     theta: np.ndarray | None = None,
     precenter_method: PrecenteringMethod | None = None,
     common_line_block_size: int = 4,
-    return_timings: bool = False,
     preprocessing_options: PreprocessingOptions | None = None,
-) -> np.ndarray | tuple[np.ndarray, PipelineTimings]:
+) -> np.ndarray:
     """
     Build a graph of relative 3D orientations between all image pairs.
 
@@ -148,9 +86,6 @@ def build_relative_orientations_graph(
     graph block with ``HANDEDNESS_REFLECTION``. This can be done with the
     ``mirror_relative_orientations_graph`` function.
     """
-    total_start = perf_counter()
-    timings = PipelineTimings()
-
     images, theta_array = _validate_pipeline_inputs(
         images,
         n_third=n_third,
@@ -159,60 +94,35 @@ def build_relative_orientations_graph(
         common_line_block_size=common_line_block_size,
     )
 
-    n_images = images.shape[0]
-
     # Pre-center the full image batch before computing the sinograms
     if precenter_method is not None:
-        start = perf_counter()
         images = precenter_images(
             images, method=precenter_method, preprocessing_options=preprocessing_options
         )
-        timings.precentering = perf_counter() - start
 
-    # Compute all sinograms
-    start = perf_counter()
     sinograms = batch_common_line_sinograms(images, theta=theta_array)
-    timings.radon = perf_counter() - start
-
-    # The image batch is no longer needed here
+    # Images are no longer needed once we have the sinograms
     del images
 
     # Detect all pairwise common lines
-    start = perf_counter()
     common_lines = detect_common_lines_all_pairs_blocked(
         sinograms, allow_reversed=True, block_size=common_line_block_size
     )
     angle_1, angle_2 = common_lines.oriented_angles(theta_array)
-    timings.common_line_detection = perf_counter() - start
 
     # Sinograms and common line indices are no longer needed once we have the angles
     del sinograms, common_lines
 
-    # Calculate number of estimated common line pairs and common line block comparisons
-    timings.common_line_pairs = n_images * (n_images - 1)
-    n_blocks = (n_images + common_line_block_size - 1) // common_line_block_size
-    timings.common_line_blocks = (n_blocks * (n_blocks + 1)) // 2
-
     # Estimate the two handedness candidates for every directed edge
     candidates = _estimate_relative_orientation_candidates(
-        angle_1,
-        angle_2,
-        n_third=n_third,
-        random_seed=random_seed,
-        timings=timings,
+        angle_1, angle_2, n_third=n_third, random_seed=random_seed
     )
     del angle_1, angle_2
 
-    start = perf_counter()
     graph = _select_consistent_handedness(
-        candidates,
-        reference_pair=handedness_reference,
+        candidates, reference_pair=handedness_reference
     )
-    timings.handedness_selection = perf_counter() - start
-    timings.total = perf_counter() - total_start
 
-    if return_timings:
-        return graph, timings
     return graph
 
 
@@ -228,8 +138,7 @@ def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
     Returns
     -------
     numpy.ndarray
-        Graph obtained by conjugating every block with
-        ``HANDEDNESS_REFLECTION``.
+        Graph obtained by conjugating every block with ``HANDEDNESS_REFLECTION``.
     """
     graph = np.asarray(graph, dtype=np.float64)
     if graph.ndim != 4 or graph.shape[2:] != (3, 3):
@@ -309,7 +218,6 @@ def _estimate_relative_orientation_candidates(
     *,
     n_third: int,
     random_seed: int | None,
-    timings: PipelineTimings,
 ) -> np.ndarray:
     """
     Estimate both handedness candidates for every ordered image pair.
@@ -325,8 +233,6 @@ def _estimate_relative_orientation_candidates(
         Maximum number of valid third images used for each ordered pair.
     random_seed
         Seed used to randomize the order of candidate third images.
-    timings
-        Timing and counter object updated during triplet reconstruction.
 
     Returns
     -------
@@ -359,7 +265,6 @@ def _estimate_relative_orientation_candidates(
         for k_value in third_indices:
             k = int(k_value)
 
-            start = perf_counter()
             try:
                 direct, mirrored = compute_transformation_matrices_from_angles(
                     angle_12_in_1=float(angle_1[i, j]),
@@ -370,12 +275,7 @@ def _estimate_relative_orientation_candidates(
                     angle_23_in_3=float(angle_2[j, k]),
                 )
             except ValueError:
-                timings.triplet_reconstruction += perf_counter() - start
-                timings.rejected_triplets += 1
                 continue
-
-            timings.triplet_reconstruction += perf_counter() - start
-            timings.valid_triplets += 1
 
             # The second matrix aligns image j with the frame of image i.
             branch_pairs.append((direct[1], mirrored[1]))
@@ -388,9 +288,7 @@ def _estimate_relative_orientation_candidates(
                 f"({i}, {j})."
             )
 
-        start = perf_counter()
         direct_mean, mirrored_mean = _average_handedness_branches(branch_pairs)
-        timings.branch_averaging += perf_counter() - start
 
         candidates[i, j, 0] = direct_mean
         candidates[i, j, 1] = mirrored_mean
@@ -423,9 +321,7 @@ def _average_handedness_branches(
 
 
 def _select_consistent_handedness(
-    candidates: np.ndarray,
-    *,
-    reference_pair: tuple[int, int],
+    candidates: np.ndarray, *, reference_pair: tuple[int, int]
 ) -> np.ndarray:
     """
     Select one globally consistent handedness branch for each graph edge.
