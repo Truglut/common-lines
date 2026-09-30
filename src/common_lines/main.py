@@ -2,10 +2,7 @@ import itertools
 
 import numpy as np
 
-from common_lines.alignment import (
-    HANDEDNESS_REFLECTION,
-    compute_transformation_matrices_from_angles,
-)
+from common_lines.alignment import HANDEDNESS_REFLECTION, get_alignment_for_second_image
 from common_lines.centering import precenter_images, PrecenteringMethod
 from common_lines.centering.preprocessing import PreprocessingOptions
 from common_lines.detection import detect_common_lines_all_pairs
@@ -266,7 +263,7 @@ def _estimate_relative_orientation_candidates(
             k = int(k_value)
 
             try:
-                direct, mirrored = compute_transformation_matrices_from_angles(
+                direct_r2, mirrored_r2 = get_alignment_for_second_image(
                     angle_12_in_1=float(angle_1[i, j]),
                     angle_12_in_2=float(angle_2[i, j]),
                     angle_13_in_1=float(angle_1[i, k]),
@@ -278,7 +275,7 @@ def _estimate_relative_orientation_candidates(
                 continue
 
             # The second matrix aligns image j with the frame of image i.
-            branch_pairs.append((direct[1], mirrored[1]))
+            branch_pairs.append((direct_r2, mirrored_r2))
             if len(branch_pairs) == n_third:
                 break
 

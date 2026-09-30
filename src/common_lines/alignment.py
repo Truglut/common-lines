@@ -122,6 +122,40 @@ def compute_transformation_matrices_from_angles(
     mirrored configurations. Neither returned branch should be treated as the
     physically correct hand without additional information.
     """
+    c_12, c_13, c_23 = _get_common_lines_from_angles(
+        angle_12_in_1,
+        angle_12_in_2,
+        angle_13_in_1,
+        angle_13_in_3,
+        angle_23_in_2,
+        angle_23_in_3,
+        eps,
+    )
+
+    # Compute the rotation matrices for each image based on the detected angles
+    R1 = np.eye(3)  # Image 1 is fixed to the identity matrix
+    R2 = _compute_matrix_from_common_lines(
+        angle_12_in_2, c_12, angle_23_in_2, c_23, eps=eps
+    )
+    R3 = _compute_matrix_from_common_lines(
+        angle_13_in_3, c_13, angle_23_in_3, c_23, eps=eps
+    )
+
+    direct = (R1, R2, R3)
+    mirrored = mirror_transformation_matrices(direct)
+
+    return direct, mirrored
+
+
+def _get_common_lines_from_angles(
+    angle_12_in_1: float,
+    angle_12_in_2: float,
+    angle_13_in_1: float,
+    angle_13_in_3: float,
+    angle_23_in_2: float,
+    angle_23_in_3: float,
+    eps: float = 1.0e-6,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     # Extract the angles of the common lines from the results
     angle_12_in_1 = _angle_to_rad(angle_12_in_1, "angle_12_in_1")
     angle_12_in_2 = _angle_to_rad(angle_12_in_2, "angle_12_in_2")
@@ -168,19 +202,40 @@ def compute_transformation_matrices_from_angles(
         raise ValueError("Inconsistent common-line angles: no valid 3D configuration.")
     c_23[2] = np.sqrt(max(z2, 0.0))
 
-    # Compute the rotation matrices for each image based on the detected angles
-    R1 = np.eye(3)  # Image 1 is fixed to the identity matrix
-    R2 = _compute_matrix_from_common_lines(
+    return c_12, c_13, c_23
+
+
+def get_alignment_for_second_image(
+    angle_12_in_1: float,
+    angle_12_in_2: float,
+    angle_13_in_1: float,
+    angle_13_in_3: float,
+    angle_23_in_2: float,
+    angle_23_in_3: float,
+    eps: float = 1.0e-6,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Compute both handedness solutions from oriented common-line angles only for the
+    second image ("image 2"). This is useful for cases where the geometric
+    configuration allows for calculating the alignment of image 2, but not image 3.
+    """
+    c_12, _, c_23 = _get_common_lines_from_angles(
+        angle_12_in_1,
+        angle_12_in_2,
+        angle_13_in_1,
+        angle_13_in_3,
+        angle_23_in_2,
+        angle_23_in_3,
+        eps,
+    )
+
+    # Compute the rotation matrix only for image 2
+    direct_r2 = _compute_matrix_from_common_lines(
         angle_12_in_2, c_12, angle_23_in_2, c_23, eps=eps
     )
-    R3 = _compute_matrix_from_common_lines(
-        angle_13_in_3, c_13, angle_23_in_3, c_23, eps=eps
-    )
+    mirrored_r2 = HANDEDNESS_REFLECTION @ direct_r2 @ HANDEDNESS_REFLECTION
 
-    direct = (R1, R2, R3)
-    mirrored = mirror_transformation_matrices(direct)
-
-    return direct, mirrored
+    return direct_r2, mirrored_r2
 
 
 @overload
