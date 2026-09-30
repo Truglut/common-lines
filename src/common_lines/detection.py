@@ -19,6 +19,9 @@ class CommonLineResult:
     ----------
     index_1, index_2
         Selected angular-profile indices in the first and second sinograms.
+        Because ``images_1[i]`` is only compared to ``images_2[i]``, ``index_1[i]``
+        contains the angular index of their common line in ``images_1[i]``, and
+        ``index_2[i]`` contains the index of the common line in ``images_2[i]``.
     correlation
         Pearson correlation of each selected profile pair.
     reversed_match
@@ -69,29 +72,27 @@ class CommonLineResult:
 @dataclass(frozen=True, slots=True)
 class CommonLineGraph:
     """
-    Common-line results for all directed image pairs.
+    Common-line results for all image pairs.
 
-    The stored arrays have shape ``(n_images, n_images)``. Angular values are
-    deliberately not stored because they can be reconstructed cheaply from
-    the indices and the angular grid. This avoids retaining two additional
-    floating-point matrices when only the indices or correlations are needed.
+    The stored arrays have shape ``(n_images, n_images)``.
 
     Attributes
     ----------
-    index_1, index_2
-        Selected angular-profile indices in the first and second image.
+    index
+        ``index[i, j]`` is the angular-profile index of the common line
+        with image ``j``, expressed in image ``i``. Therefore, the two angular
+        indices associated with pair ``(i, j)`` are ``index[i, j]`` and
+        ``index[j, i]``.
     correlation
         Correlation value of each selected match.
     reversed_match
         Boolean matrix identifying detector-reversed matches. It is ``None``
         when reversed profiles were not considered.
-    n_angles: int, optional
-        Length of the angular array used to compute the sinograms.
-        Default is 0 for an empty object.
+    n_angles
+        Number of angular profiles in each sinogram.
     """
 
-    index_1: np.ndarray
-    index_2: np.ndarray
+    index: np.ndarray
     correlation: np.ndarray
     reversed_match: np.ndarray | None = None
     n_angles: int = 0
@@ -103,22 +104,14 @@ class CommonLineGraph:
         """
         Convert the stored indices into oriented angular matrices.
 
-        Parameters
-        ----------
-        theta
-            Angular grid used to generate the sinograms, with shape ``(A,)``.
-
-        Returns
-        -------
-        angle_1, angle_2
-            Arrays with shape ``(n_images, n_images)``. For reversed matches,
-            180 degrees is added to ``angle_2`` modulo 360 degrees.
+        For pair ``(i, j)``, the returned angles correspond to the common
+        line expressed in images ``i`` and ``j``, respectively.
         """
         theta = np.asarray(theta)
         _validate_theta(theta, self.n_angles, "theta")
 
-        angle_1 = theta[self.index_1]
-        angle_2 = theta[self.index_2]
+        angle_1 = theta[self.index]
+        angle_2 = theta[self.index.T]
 
         if self.reversed_match is not None:
             angle_2 = np.mod(
@@ -141,8 +134,6 @@ def detect_common_lines(
     sinograms_1: np.ndarray,
     sinograms_2: np.ndarray,
     *,
-    theta_1: np.ndarray | None = None,
-    theta_2: np.ndarray | None = None,
     eps: float = 1.0e-8,
     allow_reversed: bool = False,
 ) -> CommonLineResult:
@@ -159,8 +150,6 @@ def detect_common_lines(
         First sinogram or batch, with shape ``(P, A1)`` or ``(B, P, A1)``.
     sinograms_2
         Second sinogram or batch, with shape ``(P, A2)`` or ``(B, P, A2)``.
-    theta_1, theta_2
-        Optional angle grids with shapes ``(A1,)`` and ``(A2,)``.
     eps
         Columns with centered norm at most ``eps`` are treated as zero.
     allow_reversed
@@ -185,11 +174,6 @@ def detect_common_lines(
             f"dimension. Got {s1.shape[1]} and {s2.shape[1]}."
         )
 
-    n_angles_1 = s1.shape[2]
-    n_angles_2 = s2.shape[2]
-    _validate_theta(theta_1, n_angles_1, "theta_1")
-    _validate_theta(theta_2, n_angles_2, "theta_2")
-
     # Normalize sinogram columns to easily compute correlation as dot product
     normalized_1 = _normalize_columns(s1, eps=eps)
     normalized_2 = _normalize_columns(s2, eps=eps)
@@ -205,11 +189,7 @@ def detect_common_lines(
             normalized_1,
             normalized_2[:, ::-1, :],
         )
-        selected, reversed_selected = _choose_best_matches(
-            normal,
-            reversed_candidate,
-            n_angles_2=n_angles_2,
-        )
+        selected, reversed_selected = _choose_best_matches(normal, reversed_candidate)
 
     return CommonLineResult(
         index_1=selected.index_1,
@@ -219,28 +199,20 @@ def detect_common_lines(
     )
 
 
-def detect_common_lines_all_pairs_blocked(
+def detect_common_lines_all_pairs(
     sinograms: np.ndarray,
     *,
     eps: float = 1.0e-8,
     allow_reversed: bool = False,
     block_size: int = 4,
 ) -> CommonLineGraph:
-    """Detect common lines between all sinogram pairs using image blocks.
-
-    All columns are normalized once. Image blocks are flattened into matrices
-    of angular profiles, so each block-to-block comparison is evaluated by one
-    matrix multiplication. Every correlation block is reduced immediately;
-    the full tensor with shape ``(N, N, A, A)`` is never allocated.
-
-    Only the upper triangle of off-diagonal image blocks is computed. Results
-    for the opposite directed pairs are obtained by transposing the image-pair
-    axes and exchanging the two angular indices.
+    """
+    Detect common lines between all sinogram pairs.
 
     Parameters
     ----------
     sinograms
-        Sinogram batch with shape ``(N, P, A)``.
+        Sinogram batch with shape ``(n, detector_size, n_angles)``.
     eps
         Columns with centered norm at most ``eps`` are treated as zero.
     allow_reversed
@@ -248,21 +220,21 @@ def detect_common_lines_all_pairs_blocked(
         sinogram.
     block_size
         Number of images processed along each block dimension. Temporary
-        correlation memory scales approximately as ``block_size**2 * A**2``.
+        correlation memory scales approximately as ``block_size**2 * n_angles**2``.
 
     Returns
     -------
     CommonLineGraph
-        Compact arrays with shape ``(N, N)`` containing all directed pairwise
-        match indices. Use ``CommonLineGraph.oriented_angles`` with the angular
-        grid when angle matrices are required.
+        Compact arrays with shape ``(n_images, n_images)`` containing all directed
+        pairwise match indices. Use ``CommonLineGraph.oriented_angles`` with the
+        angular grid when angle matrices are required.
     """
     _validate_eps(eps)
     block_size = _validate_block_size(block_size)
 
     # Prepare features: sinograms with normalized columns in original and reversed order
     sinograms = _as_sinogram_batch(sinograms)
-    n_images, detector_size, n_angles = sinograms.shape
+    n_images, _, n_angles = sinograms.shape
     features, reversed_features = _prepare_common_line_features(
         sinograms,
         eps=eps,
@@ -271,8 +243,7 @@ def detect_common_lines_all_pairs_blocked(
 
     # Prepare output arrays
     index_dtype = _angular_index_dtype(n_angles)
-    index_1 = np.empty((n_images, n_images), dtype=index_dtype)
-    index_2 = np.empty_like(index_1)
+    index = np.empty((n_images, n_images), dtype=index_dtype)
     correlation = np.empty((n_images, n_images), dtype=features.dtype)
     reversed_match = (
         np.empty((n_images, n_images), dtype=bool) if allow_reversed else None
@@ -281,81 +252,70 @@ def detect_common_lines_all_pairs_blocked(
     # Process features in blocks to detect best matches
     for i_start in range(0, n_images, block_size):
         i_stop = min(i_start + block_size, n_images)
-        n_left = i_stop - i_start
-        left = features[i_start:i_stop].reshape(
-            n_left * n_angles,
-            detector_size,
-        )
+        i_slice = slice(i_start, i_stop)
+        left = features[i_slice]
 
         for j_start in range(i_start, n_images, block_size):
             j_stop = min(j_start + block_size, n_images)
-            n_right = j_stop - j_start
-            right = features[j_start:j_stop].reshape(
-                n_right * n_angles,
-                detector_size,
-            )
+            j_slice = slice(j_start, j_stop)
+            right = features[j_slice]
 
-            selected = _detect_block_matches(
-                left,
-                right,
-                n_left=n_left,
-                n_right=n_right,
-                n_angles=n_angles,
-            )
+            selected = _detect_block_matches(left, right)
             block_reversed = None
 
             if reversed_features is not None:
                 # Detect matches also for the reversed features and keep best match
-                right_reversed = reversed_features[j_start:j_stop].reshape(
-                    n_right * n_angles,
-                    detector_size,
-                )
-                reversed_candidate = _detect_block_matches(
-                    left,
-                    right_reversed,
-                    n_left=n_left,
-                    n_right=n_right,
-                    n_angles=n_angles,
-                )
+                right_reversed = reversed_features[j_start:j_stop]
+                reversed_candidate = _detect_block_matches(left, right_reversed)
                 selected, block_reversed = _choose_best_matches(
-                    selected,
-                    reversed_candidate,
-                    n_angles_2=n_angles,
+                    selected, reversed_candidate
                 )
 
-            # Store results in output arrays
-            i_slice = slice(i_start, i_stop)
-            j_slice = slice(j_start, j_stop)
-            _store_match_block(
-                index_1,
-                index_2,
-                correlation,
-                reversed_match,
-                selected,
-                i_slice=i_slice,
-                j_slice=j_slice,
-                reversed_selected=block_reversed,
-                transpose=False,
-            )
+            same_block = i_start == j_start  # j_start starts from i_start
 
-            # For non-diagonal blocks, also store results for the lower triangular
-            # part of the matrix
-            if i_start != j_start:
-                _store_match_block(
-                    index_1,
-                    index_2,
-                    correlation,
-                    reversed_match,
-                    selected,
-                    i_slice=j_slice,
-                    j_slice=i_slice,
-                    reversed_selected=block_reversed,
-                    transpose=True,
-                )
+            if same_block:
+                # When comparing a block against itself, we enforce the graph's
+                # symmetry by doing  index[i, j] = selected.index_1[i, j] and
+                # index[j, i] = selected.index_2[i, j]
+                n_block = i_stop - i_start
+                row, col = np.triu_indices(n_block, k=1)
+
+                global_i = i_start + row
+                global_j = i_start + col  # i_start == j_start here
+
+                index[global_i, global_j] = selected.index_1[row, col]
+                index[global_j, global_i] = selected.index_2[row, col]
+
+                correlation[global_i, global_j] = selected.correlation[row, col]
+                correlation[global_j, global_i] = selected.correlation[row, col]
+
+                if reversed_match is not None:
+                    assert block_reversed is not None
+                    reversed_match[global_i, global_j] = block_reversed[row, col]
+                    reversed_match[global_j, global_i] = block_reversed[row, col]
+
+            else:
+                index[i_slice, j_slice] = selected.index_1
+                index[j_slice, i_slice] = selected.index_2.T
+
+                correlation[i_slice, j_slice] = selected.correlation
+                correlation[j_slice, i_slice] = selected.correlation.T
+
+                if reversed_match is not None:
+                    assert block_reversed is not None
+                    reversed_match[i_slice, j_slice] = block_reversed
+                    reversed_match[j_slice, i_slice] = block_reversed.T
+
+    # The diagonal does not have a defined meaning for common lines, initialize it
+    # for consistency
+    diag = np.arange(n_images)
+    index[diag, diag] = 0
+    correlation[diag, diag] = np.nan
+    if reversed_match is not None:
+        reversed_match[diag, diag] = False
 
     return CommonLineGraph(
-        index_1=index_1,
-        index_2=index_2,
+        index=index,
         correlation=correlation,
         reversed_match=reversed_match,
         n_angles=n_angles,
@@ -377,22 +337,54 @@ def _detect_pairwise_matches(
 
 
 def _detect_block_matches(
-    left: np.ndarray,
-    right: np.ndarray,
-    *,
-    n_left: int,
-    n_right: int,
-    n_angles: int,
+    normalized_left: np.ndarray,
+    normalized_right: np.ndarray,
 ) -> _MatchResult:
-    """Find the best angular match for every image pair in two blocks."""
-    correlation = left @ right.T
-    index_1, index_2, score = _reduce_correlation_block(
-        correlation,
-        n_left=n_left,
-        n_right=n_right,
-        n_angles=n_angles,
+    """
+    Calculates the correlation between each element of the two arrays (assuming their
+    first axis is a batch dimension) and returns the indices of the best matches,
+    along with their correlation values
+
+    Parameters
+    ----------
+    normalized_left : np.ndarray
+        Features array of shape ``(n_left, n_angles_left, detector_size)`` whose
+        last dimension is normalized, i.e. ``normalized_left[i, j, :]`` has norm 1
+        for every i, j.
+    normalized_right : np.ndarray
+        Features array of shape ``(n_right, n_angles_right, detector_size)``, also
+        normalized.
+
+    Returns
+    -------
+    _MatchResult
+        Best correlation matches along with their values.
+    """
+    n_left, n_angles_left, detector_size = normalized_left.shape
+    n_right, n_angles_right, _ = normalized_right.shape
+
+    left_2d = normalized_left.reshape(-1, detector_size)  # (..., detector_size)
+    right_2d = normalized_right.reshape(-1, detector_size)  # (..., detector_size)
+
+    correlation = (
+        (left_2d @ right_2d.T)  # (..., detector_size) @ (detector_size, ...)
+        .reshape(n_left, n_angles_left, n_right, n_angles_right)
+        .transpose(0, 2, 1, 3)
+        .reshape(n_left, n_right, -1)
     )
-    return _MatchResult(index_1, index_2, score)
+
+    indices_flat = correlation.argmax(axis=-1)
+    corr_values = np.take_along_axis(
+        correlation, indices_flat[..., None], axis=-1
+    ).squeeze(-1)
+
+    index_left, index_right = np.unravel_index(
+        indices_flat, shape=(n_angles_left, n_angles_right)
+    )
+
+    return _MatchResult(
+        index_1=index_left, index_2=index_right, correlation=corr_values
+    )
 
 
 def _reduce_pairwise_correlations(correlation: np.ndarray) -> _MatchResult:
@@ -412,69 +404,15 @@ def _reduce_pairwise_correlations(correlation: np.ndarray) -> _MatchResult:
     return _MatchResult(index_1, index_2, score)
 
 
-def _reduce_correlation_block(
-    correlation: np.ndarray,
-    *,
-    n_left: int,
-    n_right: int,
-    n_angles: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Extract the best angular pair for every image pair in one block.
-
-    The matrix is viewed as
-    ``(left_image, left_angle, right_image, right_angle)`` and reduced in two
-    stages. This avoids transposing and copying all ``(A, A)`` pair matrices.
-    """
-    correlation = correlation.reshape(
-        n_left,
-        n_angles,
-        n_right,
-        n_angles,
-    )
-
-    best_right_for_left = np.argmax(correlation, axis=3)
-    best_score_for_left = np.take_along_axis(
-        correlation,
-        best_right_for_left[..., None],
-        axis=3,
-    )[..., 0]
-
-    index_left = np.argmax(best_score_for_left, axis=1)
-    gather_left = index_left[:, None, :]
-
-    index_right = np.take_along_axis(
-        best_right_for_left,
-        gather_left,
-        axis=1,
-    )[:, 0, :]
-    score = np.take_along_axis(
-        best_score_for_left,
-        gather_left,
-        axis=1,
-    )[:, 0, :]
-
-    return index_left, index_right, score
-
-
 def _choose_best_matches(
-    normal: _MatchResult,
-    reversed_match: _MatchResult,
-    *,
-    n_angles_2: int,
+    normal: _MatchResult, reversed_match: _MatchResult
 ) -> tuple[_MatchResult, np.ndarray]:
-    """Select between normal and detector-reversed candidates.
-
-    Ties reproduce an elementwise maximum followed by a C-order flattened
-    ``argmax``: the earliest angular pair wins, and the normal candidate is
-    preferred when both candidates refer to the same pair.
     """
-    normal_flat = normal.index_1 * n_angles_2 + normal.index_2
-    reversed_flat = reversed_match.index_1 * n_angles_2 + reversed_match.index_2
+    Select the better normal or detector-reversed match.
 
+    Ties are resolved in favor of the normal match.
+    """
     use_reversed = reversed_match.correlation > normal.correlation
-    use_reversed |= (reversed_match.correlation == normal.correlation) & (
-        reversed_flat < normal_flat
-    )
 
     selected = _MatchResult(
         index_1=np.where(use_reversed, reversed_match.index_1, normal.index_1),
@@ -485,6 +423,7 @@ def _choose_best_matches(
             normal.correlation,
         ),
     )
+
     return selected, use_reversed
 
 
@@ -503,94 +442,6 @@ def _prepare_common_line_features(
         reversed_features = np.ascontiguousarray(features[..., ::-1])
 
     return features, reversed_features
-
-
-def _store_match_block(
-    index_1: np.ndarray,
-    index_2: np.ndarray,
-    correlation: np.ndarray,
-    reversed_match: np.ndarray | None,
-    selected: _MatchResult,
-    *,
-    i_slice: slice,
-    j_slice: slice,
-    reversed_selected: np.ndarray | None,
-    transpose: bool,
-) -> None:
-    """Store one block of common-line matches in the global result arrays.
-
-    The input ``selected`` contains the best angular match for every pair of
-    images in two blocks. Its arrays have shape ``(n_left, n_right)`` and are
-    written into the region defined by ``i_slice`` and ``j_slice``.
-
-    When ``transpose`` is false, the matches are stored directly. When it is
-    true, the opposite directed image pairs are stored: the image-pair axes are
-    transposed and the angular indices are exchanged, so a match ``(a, b)``
-    for ``(i, j)`` becomes ``(b, a)`` for ``(j, i)``.
-
-    Parameters
-    ----------
-    index_1, index_2
-        Global arrays with shape ``(n_images, n_images)`` storing the selected
-        indices in the first and second image.
-    correlation
-        Global array with shape ``(n_images, n_images)`` storing selected
-        correlation values.
-    reversed_match
-        Global boolean array, or ``None`` when reversed profiles are disabled.
-    selected
-        Best indices and correlations for the current block.
-    i_slice, j_slice
-        Destination region in the global arrays.
-    reversed_selected
-        Boolean flags for the current block. It is provided when reversed
-        profiles are enabled.
-    transpose
-        Store the direct block when false, or the opposite-direction block
-        when true.
-
-    Notes
-    -----
-    The output arrays are modified in place. Reusing the transposed block
-    avoids recomputing correlations for both directed image-pair orders.
-    """
-    if transpose:
-        index_1[i_slice, j_slice] = selected.index_2.T
-        index_2[i_slice, j_slice] = selected.index_1.T
-        correlation[i_slice, j_slice] = selected.correlation.T
-
-        if reversed_match is not None:
-            if reversed_selected is None:
-                raise ValueError(
-                    "reversed_match and reverse_selected must be provided together"
-                )
-            reversed_match[i_slice, j_slice] = reversed_selected.T
-        return
-
-    index_1[i_slice, j_slice] = selected.index_1
-    index_2[i_slice, j_slice] = selected.index_2
-    correlation[i_slice, j_slice] = selected.correlation
-
-    if reversed_match is not None:
-        reversed_match[i_slice, j_slice] = reversed_selected
-
-
-def _indices_to_angles(
-    index_1: np.ndarray,
-    index_2: np.ndarray,
-    *,
-    theta_1: np.ndarray | None,
-    theta_2: np.ndarray | None,
-    reversed_match: np.ndarray | None,
-) -> tuple[np.ndarray | None, np.ndarray | None]:
-    """Convert selected indices into oriented angular values."""
-    angle_1 = None if theta_1 is None else np.asarray(theta_1)[index_1]
-    angle_2 = None if theta_2 is None else np.asarray(theta_2)[index_2]
-
-    if angle_2 is not None and reversed_match is not None:
-        angle_2 = np.mod(angle_2 + 180.0 * reversed_match, 360.0)
-
-    return angle_1, angle_2
 
 
 def _as_batch_sinograms(sinograms: np.ndarray) -> np.ndarray:
@@ -683,15 +534,8 @@ def _angular_index_dtype(n_angles: int) -> np.dtype:
     return np.dtype(np.min_scalar_type(n_angles - 1))
 
 
-def _validate_theta(
-    theta: np.ndarray | None,
-    n_angles: int,
-    name: str,
-) -> None:
-    """Check that an optional angle grid has the expected one-dimensional shape."""
-    if theta is None:
-        return
-
+def _validate_theta(theta: np.ndarray, n_angles: int, name: str) -> None:
+    """Check that an angle grid has the expected one-dimensional shape."""
     theta = np.asarray(theta)
     if theta.ndim != 1:
         raise ValueError(f"{name} must be one-dimensional.")

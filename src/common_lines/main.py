@@ -8,7 +8,7 @@ from common_lines.alignment import (
 )
 from common_lines.centering import precenter_images, PrecenteringMethod
 from common_lines.centering.preprocessing import PreprocessingOptions
-from common_lines.detection import detect_common_lines_all_pairs_blocked
+from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.procrustes import nearest_rotation
 from common_lines.radon import batch_common_line_sinograms
 
@@ -105,7 +105,7 @@ def build_relative_orientations_graph(
     del images
 
     # Detect all pairwise common lines
-    common_lines = detect_common_lines_all_pairs_blocked(
+    common_lines = detect_common_lines_all_pairs(
         sinograms, allow_reversed=True, block_size=common_line_block_size
     )
     angle_1, angle_2 = common_lines.oriented_angles(theta_array)
