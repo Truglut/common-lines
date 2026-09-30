@@ -1,8 +1,7 @@
 import numpy as np
-from numpy.typing import ArrayLike, NDArray
 
 
-def nearest_rotation(matrix: ArrayLike) -> NDArray[np.floating]:
+def nearest_rotation(matrix: np.ndarray) -> np.ndarray:
     """
     Return the rotation matrix closest to a 3x3 matrix in Frobenius norm.
 
