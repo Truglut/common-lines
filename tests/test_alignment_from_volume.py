@@ -5,9 +5,8 @@ from common_lines.alignment import (
     compute_transformation_matrices_from_angles,
     mirror_transformation_matrices,
 )
-from common_lines.detection import detect_common_lines
+from common_lines.detection import detect_common_lines, CommonLineResult
 from common_lines.radon import batch_common_line_sinograms
-
 
 THETA_DEG = np.arange(0.0, 180.0, 1.0)
 FINE_THETA_DEG = np.arange(0.0, 180.0, 0.5)
@@ -32,7 +31,6 @@ EXPECTED_R3 = np.array(
     ],
     dtype=np.float64,
 )
-
 
 
 def _first(value):
@@ -132,28 +130,10 @@ def _axis_aligned_projections(volume: np.ndarray) -> np.ndarray:
 
 def _detect_axis_aligned_common_lines(
     sinograms: np.ndarray,
-) -> tuple[object, object, object]:
-    result_12 = detect_common_lines(
-        sinograms[0],
-        sinograms[1],
-        theta_1=THETA_DEG,
-        theta_2=THETA_DEG,
-        allow_reversed=True,
-    )
-    result_13 = detect_common_lines(
-        sinograms[0],
-        sinograms[2],
-        theta_1=THETA_DEG,
-        theta_2=THETA_DEG,
-        allow_reversed=True,
-    )
-    result_23 = detect_common_lines(
-        sinograms[1],
-        sinograms[2],
-        theta_1=THETA_DEG,
-        theta_2=THETA_DEG,
-        allow_reversed=True,
-    )
+) -> tuple[CommonLineResult, CommonLineResult, CommonLineResult]:
+    result_12 = detect_common_lines(sinograms[0], sinograms[1], allow_reversed=True)
+    result_13 = detect_common_lines(sinograms[0], sinograms[2], allow_reversed=True)
+    result_23 = detect_common_lines(sinograms[1], sinograms[2], allow_reversed=True)
     return result_12, result_13, result_23
 
 
@@ -259,29 +239,10 @@ def _project_gaussian_volume_model(
 
 def _detect_common_lines_for_three_images(
     sinograms: np.ndarray,
-    theta: np.ndarray,
-) -> tuple[object, object, object]:
-    result_12 = detect_common_lines(
-        sinograms[0],
-        sinograms[1],
-        theta_1=theta,
-        theta_2=theta,
-        allow_reversed=True,
-    )
-    result_13 = detect_common_lines(
-        sinograms[0],
-        sinograms[2],
-        theta_1=theta,
-        theta_2=theta,
-        allow_reversed=True,
-    )
-    result_23 = detect_common_lines(
-        sinograms[1],
-        sinograms[2],
-        theta_1=theta,
-        theta_2=theta,
-        allow_reversed=True,
-    )
+) -> tuple[CommonLineResult, CommonLineResult, CommonLineResult]:
+    result_12 = detect_common_lines(sinograms[0], sinograms[1], allow_reversed=True)
+    result_13 = detect_common_lines(sinograms[0], sinograms[2], allow_reversed=True)
+    result_23 = detect_common_lines(sinograms[1], sinograms[2], allow_reversed=True)
     return result_12, result_13, result_23
 
 
@@ -299,18 +260,13 @@ def test_detect_common_lines_keeps_compact_array_outputs_for_a_single_pair():
         circle=True,
     )
 
-    result = detect_common_lines(
-        sinograms[0],
-        sinograms[1],
-        theta_1=THETA_DEG,
-        theta_2=THETA_DEG,
-        allow_reversed=True,
-    )
+    result = detect_common_lines(sinograms[0], sinograms[1], allow_reversed=True)
     angle_1, angle_2 = result.oriented_angles(THETA_DEG, THETA_DEG)
 
     assert result.index_1.shape == (1,)
     assert result.index_2.shape == (1,)
     assert result.correlation.shape == (1,)
+    assert result.reversed_match is not None
     assert result.reversed_match.shape == (1,)
     assert angle_1.shape == (1,)
     assert angle_2.shape == (1,)
@@ -338,7 +294,6 @@ def test_hand_checkable_orthogonal_common_lines_return_both_handednesses():
 
     for R_est, R_expected in zip(mirrored, expected_mirrored):
         assert np.allclose(R_est, R_expected, atol=1.0e-12)
-
 
 
 def test_radon_detects_the_obvious_axis_aligned_common_lines():
@@ -403,7 +358,7 @@ def test_arbitrary_volume_pipeline_recovers_one_global_handedness():
         circle=True,
     )
 
-    detected = _detect_common_lines_for_three_images(sinograms, FINE_THETA_DEG)
+    detected = _detect_common_lines_for_three_images(sinograms)
     solutions = _solve_detected_triplet(detected, FINE_THETA_DEG)
 
     for rotations in solutions:

@@ -3,7 +3,7 @@ import pytest
 
 from common_lines.detection import (
     detect_common_lines,
-    detect_common_lines_all_pairs_blocked,
+    detect_common_lines_all_pairs,
 )
 from common_lines.radon import batch_common_line_sinograms
 
@@ -48,15 +48,10 @@ def test_reversed_profile_is_represented_by_adding_180_degrees():
     theta_1 = np.array([25.0])
     theta_2 = np.array([70.0])
 
-    result = detect_common_lines(
-        sinogram_1,
-        sinogram_2,
-        theta_1=theta_1,
-        theta_2=theta_2,
-        allow_reversed=True,
-    )
+    result = detect_common_lines(sinogram_1, sinogram_2, allow_reversed=True)
     angle_1, angle_2 = result.oriented_angles(theta_1, theta_2)
 
+    assert result.reversed_match is not None
     assert bool(result.reversed_match[0])
     assert angle_1[0] == pytest.approx(25.0)
     assert angle_2[0] == pytest.approx(250.0)
@@ -72,13 +67,14 @@ def test_blocked_all_pairs_detection_uses_the_same_angle_convention():
     sinograms = np.stack([profile[:, None], profile[::-1, None]])
     theta = np.array([40.0])
 
-    graph = detect_common_lines_all_pairs_blocked(
+    graph = detect_common_lines_all_pairs(
         sinograms,
         allow_reversed=True,
         block_size=1,
     )
     angle_1, angle_2 = graph.oriented_angles(theta)
 
+    assert graph.reversed_match is not None
     assert bool(graph.reversed_match[0, 1])
     assert angle_1[0, 1] == pytest.approx(40.0)
     assert angle_2[0, 1] == pytest.approx(220.0)
