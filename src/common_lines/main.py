@@ -5,7 +5,11 @@ import numpy as np
 
 from common_lines.alignment import HANDEDNESS_REFLECTION, get_alignment_for_second_image
 from common_lines.centering import precenter_images, PrecenteringMethod
-from common_lines.centering.preprocessing import PreprocessingOptions
+from common_lines.centering.preprocessing import (
+    PreprocessingOptions,
+    default_preprocessing_options,
+    preprocess_images,
+)
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.procrustes import nearest_rotation
 from common_lines.radon import batch_common_line_sinograms
@@ -46,7 +50,7 @@ def build_relative_orientations_graph(
     random_seed: int | None = 0,
     handedness_reference: tuple[int, int] | None = None,
     theta: np.ndarray | None = None,
-    precenter_method: PrecenteringMethod | None = None,
+    precenter_method: PrecenteringMethod | None = "center_of_mass",
     common_line_block_size: int = 4,
     preprocessing_options: PreprocessingOptions | None = None,
 ) -> np.ndarray:
@@ -78,21 +82,19 @@ def build_relative_orientations_graph(
         detection. Larger values may improve throughput but require more memory.
     return_timings
         If True, also return a ``PipelineTimings`` instance.
-    preprocessing_options : PreprocessingOptions, optional
-        Parameters for ``preprocess_images``. See ``PreprocessingOptions``
-        for more information.
+    preprocessing_options
+        Preprocessing used both to estimate precentering shifts and, after
+        centering, before common-line detection. ``None`` selects the standard
+        circular-mask/background-subtraction defaults. Pass
+        ``PreprocessingOptions()`` to disable preprocessing in both stages.
 
     Returns
     -------
-    numpy.ndarray or tuple
+    numpy.ndarray
         Directed relative-orientation graph with shape
         ``(n_images, n_images, 3, 3)``. The block ``graph[i, j]`` aligns image
         ``j`` with the coordinate system of image ``i``. If ``return_timings``
         is True, the graph and timing information are returned as a tuple.
-    numpy.ndarray
-        Boolean array with shape ``(n_images, n_images)`` indicating for each directed
-        image pair, whether a fallback was used due to not finding a valid third
-        image for the angular reconstitution algorithm.
 
     Notes
     -----
@@ -143,15 +145,22 @@ def build_relative_orientations_graph_with_diagnostics(
         common_line_block_size=common_line_block_size,
     )
 
+    resolved_preprocessing = (
+        default_preprocessing_options(images)
+        if preprocessing_options is None
+        else preprocessing_options
+    )
+
     if precenter_method is not None:
         images = precenter_images(
             images,
             method=precenter_method,
-            preprocessing_options=preprocessing_options,
+            preprocessing_options=resolved_preprocessing,
         )
 
-    sinograms = batch_common_line_sinograms(images, theta=theta_array)
-    del images
+    images_for_detection = preprocess_images(images, options=resolved_preprocessing)
+    sinograms = batch_common_line_sinograms(images_for_detection, theta=theta_array)
+    del images, images_for_detection
 
     common_lines = detect_common_lines_all_pairs(
         sinograms, allow_reversed=True, block_size=common_line_block_size

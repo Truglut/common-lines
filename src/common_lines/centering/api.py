@@ -4,10 +4,12 @@ from typing import Literal
 
 import numpy as np
 
+from common_lines.centering.preprocessing import default_preprocessing_options
+
 from .center_of_mass import estimate_center_of_mass_shifts
 from .reflection import estimate_reflection_shifts
 from .shifts import shift_images
-from .preprocessing import PreprocessingOptions, create_circular_mask
+from .preprocessing import PreprocessingOptions
 
 PrecenteringMethod = Literal["reflection", "center_of_mass"]
 
@@ -28,7 +30,7 @@ def estimate_shifts(
     preprocessing.
     """
     if preprocessing_options is None:
-        preprocessing_options = _default_center_of_mass_preprocessing(images)
+        preprocessing_options = default_preprocessing_options(images)
 
     if method == "reflection":
         return estimate_reflection_shifts(
@@ -62,16 +64,3 @@ def precenter_images(
         **kwargs,
     )
     return shift_images(images, shifts)
-
-
-def _default_center_of_mass_preprocessing(images: np.ndarray) -> PreprocessingOptions:
-    """Build the default preprocessing used by center-of-mass precentering."""
-    image_shape = np.asarray(images).shape[-2:]
-    radius = min(image_shape) / 2.0
-    mask = create_circular_mask(image_shape, radius=radius)
-
-    return PreprocessingOptions(
-        mask=mask,
-        subtract_background=True,
-        clip_negative=False,
-    )

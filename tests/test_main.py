@@ -107,6 +107,26 @@ def test_pipeline_diagnostics_report_fallback_edges(monkeypatch):
             )
 
 
+def test_simple_api_returns_only_graph(monkeypatch):
+    expected_graph = np.broadcast_to(np.eye(3), (3, 3, 3, 3)).copy()
+    detailed = main.OrientationEstimationResult(
+        graph=expected_graph,
+        used_fallback=np.zeros((3, 3), dtype=bool),
+        handedness_reference=(0, 1),
+    )
+
+    monkeypatch.setattr(
+        main,
+        "build_relative_orientations_graph_with_diagnostics",
+        lambda *args, **kwargs: detailed,
+    )
+
+    graph = main.build_relative_orientations_graph(np.zeros((3, 5, 5)))
+
+    assert isinstance(graph, np.ndarray)
+    assert graph is expected_graph
+
+
 def test_automatic_handedness_reference_avoids_fallback_edge():
     used_fallback = np.array(
         [
@@ -120,3 +140,75 @@ def test_automatic_handedness_reference_avoids_fallback_edge():
 
     assert reference == (0, 2)
     assert not used_fallback[reference]
+
+
+def test_pipeline_reuses_preprocessing_after_precentering(monkeypatch):
+    images = np.zeros((3, 5, 5), dtype=np.float64)
+    centered_images = np.full_like(images, 2.0)
+    detection_images = np.full_like(images, 3.0)
+    options = main.PreprocessingOptions(
+        mask=np.ones((5, 5), dtype=np.float64),
+        subtract_background=False,
+        clip_negative=True,
+    )
+
+    calls = []
+
+    def fake_precenter(input_images, *, method, preprocessing_options):
+        calls.append(("precenter", input_images, preprocessing_options))
+        assert input_images is images
+        assert method == "center_of_mass"
+        return centered_images
+
+    def fake_preprocess(input_images, *, options):
+        calls.append(("preprocess", input_images, options))
+        assert input_images is centered_images
+        return detection_images
+
+    def fake_sinograms(input_images, *, theta):
+        calls.append(("sinograms", input_images, None))
+        assert input_images is detection_images
+        return np.zeros((3, len(theta), 5), dtype=np.float64)
+
+    angle_1 = np.array(
+        [
+            [0.0, 10.0, 25.0],
+            [40.0, 0.0, 60.0],
+            [80.0, 110.0, 0.0],
+        ]
+    )
+    angle_2 = np.array(
+        [
+            [0.0, 40.0, 80.0],
+            [10.0, 0.0, 110.0],
+            [25.0, 60.0, 0.0],
+        ]
+    )
+
+    class FakeCommonLines:
+        def oriented_angles(self, theta):
+            return angle_1, angle_2
+
+    monkeypatch.setattr(main, "precenter_images", fake_precenter)
+    monkeypatch.setattr(main, "preprocess_images", fake_preprocess)
+    monkeypatch.setattr(main, "batch_common_line_sinograms", fake_sinograms)
+    monkeypatch.setattr(
+        main,
+        "detect_common_lines_all_pairs",
+        lambda sinograms, allow_reversed, block_size: FakeCommonLines(),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_alignment_for_second_image",
+        lambda **kwargs: (_ for _ in ()).throw(ValueError("force fallback")),
+    )
+
+    main.build_relative_orientations_graph(
+        images,
+        theta=np.array([0.0, 90.0]),
+        preprocessing_options=options,
+    )
+
+    assert [name for name, _, _ in calls] == ["precenter", "preprocess", "sinograms"]
+    assert calls[0][2] is options
+    assert calls[1][2] is options

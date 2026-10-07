@@ -6,27 +6,27 @@ import numpy as np
 @dataclass
 class PreprocessingOptions:
     """
-    Options used for preprocessing before centering particles
+    Options used for preprocessing particle images.
 
     Attributes
     ----------
     mask : np.ndarray, optional
-        Mask that determines the contribution of each part of the images to the
-        center of mass calculation.
+        Mask that determines which parts of the images are retained during
+        preprocessing.
         It can be an array of shape ``(batch, height, width)`` containing an
         individual mask for each image, or shape ``(height, width)`` to use the
         same mask for every image.
         Its elements should be floating point numbers between 0 and 1.
-        The center of mass is calculated for ``processed * mask``, where ``processed``
-        is the result of applying the previous preprocessing steps to the images.
+        The mask is applied after background subtraction and optional negative
+        clipping.
         If no mask is provided, then no mask will be applied to the images.
         Default is None.
     subtract_background : bool, optional
         If True, the background level will be estimated for every image using
         the average image value in ``background_mask``, or the average value in
         ``1.0 - mask`` if ``background_mask`` is not provided. This background
-        level will then be subtracted from the images before computing the centers
-        of mass.
+        level will then be subtracted from the images before the remaining
+        preprocessing steps.
         Default is False.
     background_mask : np.ndarray, optional
         Mask used for the background level estimation. Default is None.
@@ -39,6 +39,25 @@ class PreprocessingOptions:
     subtract_background: bool = False
     background_mask: np.ndarray | None = None
     clip_negative: bool = False
+
+
+def default_preprocessing_options(images: np.ndarray) -> PreprocessingOptions:
+    """
+    Build the standard preprocessing used by the orientation pipeline.
+
+    The default uses an inscribed circular mask, estimates the background from
+    the region outside that mask, subtracts that background, and leaves negative
+    values unchanged.
+    """
+    image_shape = np.asarray(images).shape[-2:]
+    radius = min(image_shape) / 2.0
+    mask = create_circular_mask(image_shape, radius=radius)
+
+    return PreprocessingOptions(
+        mask=mask,
+        subtract_background=True,
+        clip_negative=False,
+    )
 
 
 def preprocess_images(
