@@ -22,7 +22,7 @@ def build_relative_orientations_graph(
     precenter_method: PrecenteringMethod | None = None,
     common_line_block_size: int = 4,
     preprocessing_options: PreprocessingOptions | None = None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Build a graph of relative 3D orientations between all image pairs.
 
@@ -73,6 +73,10 @@ def build_relative_orientations_graph(
         ``(n_images, n_images, 3, 3)``. The block ``graph[i, j]`` aligns image
         ``j`` with the coordinate system of image ``i``. If ``return_timings``
         is True, the graph and timing information are returned as a tuple.
+    numpy.ndarray
+        Boolean array with shape ``(n_images, n_images)`` indicating for each directed
+        image pair, whether a fallback was used due to not finding a valid third
+        image for the angular reconstitution algorithm.
 
     Notes
     -----
@@ -111,7 +115,7 @@ def build_relative_orientations_graph(
     del sinograms, common_lines
 
     # Estimate the two handedness candidates for every directed edge
-    candidates = _estimate_relative_orientation_candidates(
+    candidates, used_fallback = _estimate_relative_orientation_candidates(
         angle_1, angle_2, n_third=n_third, random_seed=random_seed
     )
     del angle_1, angle_2
@@ -120,7 +124,7 @@ def build_relative_orientations_graph(
         candidates, reference_pair=handedness_reference
     )
 
-    return graph
+    return graph, used_fallback
 
 
 def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
@@ -215,7 +219,7 @@ def _estimate_relative_orientation_candidates(
     *,
     n_third: int,
     random_seed: int | None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Estimate both handedness candidates for every ordered image pair.
 
@@ -226,6 +230,7 @@ def _estimate_relative_orientation_candidates(
         ``(n_images, n_images)``. For pair ``(i, j)``,
         ``angle_1[i, j]`` is the common-line angle in image ``i`` and
         ``angle_2[i, j]`` is the corresponding oriented angle in image ``j``.
+        Angles are expressed in degrees.
     n_third
         Maximum number of valid third images used for each ordered pair.
     random_seed
@@ -236,6 +241,10 @@ def _estimate_relative_orientation_candidates(
     numpy.ndarray
         Array with shape ``(n_images, n_images, 2, 3, 3)`` containing
         the two handedness candidates for every directed image pair.
+    numpy.ndarray
+        Boolean array with shape ``(n_images, n_images)`` indicating for each directed
+        image pair, whether a fallback was used due to not finding a valid third
+        image for the angular reconstitution algorithm.
     """
     n_images = angle_1.shape[0]
     image_indices = np.arange(n_images)
@@ -246,6 +255,7 @@ def _estimate_relative_orientation_candidates(
         dtype=np.float64,
     )
     candidates[image_indices, image_indices, :, :, :] = np.eye(3)
+    used_fallback = np.zeros((n_images, n_images), dtype=bool)
 
     available_mask = np.ones(n_images, dtype=bool)
 
@@ -280,17 +290,16 @@ def _estimate_relative_orientation_candidates(
                 break
 
         if not branch_pairs:
-            raise ValueError(
-                "Could not find a valid third image for the ordered pair "
-                f"({i}, {j})."
-            )
+            fallback_pair = _estimate_pairwise_fallback(angle_1[i, j], angle_2[i, j])
+            branch_pairs.append(fallback_pair)
+            used_fallback[i, j] = True
 
         direct_mean, mirrored_mean = _average_handedness_branches(branch_pairs)
 
         candidates[i, j, 0] = direct_mean
         candidates[i, j, 1] = mirrored_mean
 
-    return candidates
+    return candidates, used_fallback
 
 
 def _average_handedness_branches(
@@ -396,3 +405,45 @@ def _select_consistent_handedness(
         graph[i, j] = candidates[i, j, branch]
 
     return graph
+
+
+def _estimate_pairwise_fallback(
+    theta_1_deg: float, theta_2_deg: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return a canonical relative orientation from one pairwise common line.
+
+    A single common line does not determine the full 3D relative orientation.
+    We therefore choose the minimum-angle rotation that maps the common-line
+    direction in image 2 onto the corresponding direction in image 1. Since
+    both directions lie in their image XY planes, this is a rotation about Z
+    by ``theta_1_deg - theta_2_deg``.
+
+    The mirrored handedness candidate is identical for this pure in-plane
+    rotation, so the same matrix is returned for both branches.
+
+
+    Parameters
+    ----------
+    theta_1_deg : float
+        Oriented common-line angle in image 1, in degrees.
+    theta_2_deg : float
+        Corresponding oriented common-line angle in image 2, in degrees.
+
+    Returns
+    -------
+    numpy.ndarray
+        Rotation that maps the coordinates of the common line in image 2 to its 
+        coordinates in image 1.
+    numpy.ndarray
+        The mirrored handedness equivalent to the orientation. With this choice
+        for the fallback, the mirrored rotation is equal to the original one,
+        but we return it twice for consistency with the alignment methods.
+    """
+    delta_rad = np.deg2rad(theta_1_deg - theta_2_deg)
+    sin = np.sin(delta_rad)
+    cos = np.cos(delta_rad)
+    rotation = np.array(
+        [[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64
+    )
+    return rotation, rotation
