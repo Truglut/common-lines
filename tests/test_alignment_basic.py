@@ -6,6 +6,7 @@ import pytest
 from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
     compute_transformation_matrices_from_angles,
+    get_alignment_for_second_image,
 )
 
 
@@ -74,6 +75,26 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
     J = HANDEDNESS_REFLECTION
     for R_direct, R_mirrored in zip(direct, mirrored):
         assert np.allclose(R_mirrored, J @ R_direct @ J, atol=1e-10)
+
+
+def test_second_image_alignment_uses_degree_inputs_consistently():
+    """The pipeline-specific second-image solver must use the same degree convention."""
+    angles = {
+        "angle_12_in_1_deg": 20.0,
+        "angle_12_in_2_deg": 70.0,
+        "angle_13_in_1_deg": 110.0,
+        "angle_13_in_3_deg": 35.0,
+        "angle_23_in_2_deg": 145.0,
+        "angle_23_in_3_deg": 125.0,
+    }
+
+    direct_triplet, mirrored_triplet = compute_transformation_matrices_from_angles(**angles)
+    direct_r2, mirrored_r2 = get_alignment_for_second_image(**angles)
+
+    _assert_rotation_matrix(direct_r2)
+    _assert_rotation_matrix(mirrored_r2)
+    assert np.allclose(direct_r2, direct_triplet[1], atol=1e-10)
+    assert np.allclose(mirrored_r2, mirrored_triplet[1], atol=1e-10)
 
 
 def test_recovers_known_configuration_in_both_handednesses():
