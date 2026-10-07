@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import itertools
 
 import numpy as np
@@ -12,30 +13,45 @@ from common_lines.radon import batch_common_line_sinograms
 DEFAULT_THETA = np.arange(0.0, 180.0, 0.5)
 
 
+@dataclass(frozen=True, slots=True)
+class OrientationEstimationResult:
+    """
+    Relative orientation graph plus estimation diagnostics.
+
+    Attributes
+    ----------
+    graph: numpy.ndarray
+        Estimated orientation graph after selecting one consistent handedness.
+        ``graph[i, j]`` transforms coordinates from image j's frame to image i's
+        frame.
+        This is only one of the two possible handedness solutions, with the other
+        one being given by ``mirror_relative_orientations_graph(graph)``.
+    used_fallback: numpy.ndarray
+        Boolean array of shape ``(n_images, n_images)``, indicating image pairs
+        where the estimated relative orientation was resolved using a fallback
+        method after no valid third image was found for angular reconstitution.
+    handedness_reference: tuple[int, int]
+        Image pair used to fix one consistent handedness for the whole graph.
+    """
+
+    graph: np.ndarray
+    used_fallback: np.ndarray
+    handedness_reference: tuple[int, int]
+
+
 def build_relative_orientations_graph(
     images: np.ndarray,
     *,
     n_third: int = 1,
-    random_seed: int | None = None,
-    handedness_reference: tuple[int, int] = (0, 1),
+    random_seed: int | None = 0,
+    handedness_reference: tuple[int, int] | None = None,
     theta: np.ndarray | None = None,
     precenter_method: PrecenteringMethod | None = None,
     common_line_block_size: int = 4,
     preprocessing_options: PreprocessingOptions | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
     """
     Build a graph of relative 3D orientations between all image pairs.
-
-    Sinograms and pairwise common lines are computed before the triplet loop.
-    Common-line detection is performed in image blocks, avoiding both repeated
-    pairwise normalization and the full correlation tensor with shape
-    ``(n_images, n_images, n_angles, n_angles)``.
-
-    A unique relative orientation requires a triplet of images. Each ordered pair
-    ``(i, j)`` is therefore estimated using up to ``n_third`` valid third images.
-    When several estimates are available, their handedness branches are aligned
-    before averaging. A final handedness-selection step chooses one branch per
-    ordered pair using triangle consistency with a fixed reference pair.
 
     Parameters
     ----------
@@ -87,6 +103,38 @@ def build_relative_orientations_graph(
     graph block with ``HANDEDNESS_REFLECTION``. This can be done with the
     ``mirror_relative_orientations_graph`` function.
     """
+    return build_relative_orientations_graph_with_diagnostics(
+        images,
+        n_third=n_third,
+        random_seed=random_seed,
+        handedness_reference=handedness_reference,
+        theta=theta,
+        precenter_method=precenter_method,
+        common_line_block_size=common_line_block_size,
+        preprocessing_options=preprocessing_options,
+    ).graph
+
+
+def build_relative_orientations_graph_with_diagnostics(
+    images: np.ndarray,
+    *,
+    n_third: int = 1,
+    random_seed: int | None = 0,
+    handedness_reference: tuple[int, int] | None = None,
+    theta: np.ndarray | None = None,
+    precenter_method: PrecenteringMethod | None = "center_of_mass",
+    common_line_block_size: int = 4,
+    preprocessing_options: PreprocessingOptions | None = None,
+) -> OrientationEstimationResult:
+    """
+    Estimate relative orientations and return diagnostics.
+
+    Returns
+    -------
+    OrientationEstimationResult
+        Contains the orientation graph, a boolean fallback mask, and the
+        handedness reference actually used.
+    """
     images, theta_array = _validate_pipeline_inputs(
         images,
         n_third=n_third,
@@ -95,52 +143,41 @@ def build_relative_orientations_graph(
         common_line_block_size=common_line_block_size,
     )
 
-    # Pre-center the full image batch before computing the sinograms
     if precenter_method is not None:
         images = precenter_images(
-            images, method=precenter_method, preprocessing_options=preprocessing_options
+            images,
+            method=precenter_method,
+            preprocessing_options=preprocessing_options,
         )
 
     sinograms = batch_common_line_sinograms(images, theta=theta_array)
-    # Images are no longer needed once we have the sinograms
     del images
 
-    # Detect all pairwise common lines
     common_lines = detect_common_lines_all_pairs(
         sinograms, allow_reversed=True, block_size=common_line_block_size
     )
     angle_1, angle_2 = common_lines.oriented_angles(theta_array)
-
-    # Sinograms and common line indices are no longer needed once we have the angles
     del sinograms, common_lines
 
-    # Estimate the two handedness candidates for every directed edge
     candidates, used_fallback = _estimate_relative_orientation_candidates(
         angle_1, angle_2, n_third=n_third, random_seed=random_seed
     )
     del angle_1, angle_2
 
-    graph = _select_consistent_handedness(
-        candidates, reference_pair=handedness_reference
+    reference_pair = _resolve_handedness_reference(
+        used_fallback, requested=handedness_reference
     )
+    graph = _select_consistent_handedness(candidates, reference_pair=reference_pair)
 
-    return graph, used_fallback
+    return OrientationEstimationResult(
+        graph=graph,
+        used_fallback=used_fallback,
+        handedness_reference=reference_pair,
+    )
 
 
 def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
-    """
-    Return the opposite-handed version of a relative-orientation graph.
-
-    Parameters
-    ----------
-    graph
-        Array with shape ``(n_images, n_images, 3, 3)``.
-
-    Returns
-    -------
-    numpy.ndarray
-        Graph obtained by conjugating every block with ``HANDEDNESS_REFLECTION``.
-    """
+    """Return the opposite-handed version of a relative-orientation graph."""
     graph = np.asarray(graph, dtype=np.float64)
     if graph.ndim != 4 or graph.shape[2:] != (3, 3):
         raise ValueError(
@@ -158,7 +195,7 @@ def _validate_pipeline_inputs(
     images: np.ndarray,
     *,
     n_third: int,
-    handedness_reference: tuple[int, int],
+    handedness_reference: tuple[int, int] | None,
     theta: np.ndarray | None,
     common_line_block_size: int,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -185,15 +222,16 @@ def _validate_pipeline_inputs(
             f"got {n_third}."
         )
 
-    reference_i, reference_j = handedness_reference
-    if not (
-        0 <= reference_i < n_images
-        and 0 <= reference_j < n_images
-        and reference_i != reference_j
-    ):
-        raise ValueError(
-            "handedness_reference must contain two different valid image indices."
-        )
+    if handedness_reference is not None:
+        reference_i, reference_j = handedness_reference
+        if not (
+            0 <= reference_i < n_images
+            and 0 <= reference_j < n_images
+            and reference_i != reference_j
+        ):
+            raise ValueError(
+                "handedness_reference must contain two different valid image indices."
+            )
 
     if common_line_block_size < 1:
         raise ValueError(
@@ -211,6 +249,23 @@ def _validate_pipeline_inputs(
         raise ValueError("theta must contain only finite values.")
 
     return images, theta_array
+
+
+def _resolve_handedness_reference(
+    used_fallback: np.ndarray, *, requested: tuple[int, int] | None
+) -> tuple[int, int]:
+    """Use an informative non-fallback edge as the default handedness reference."""
+    if requested is not None:
+        return requested
+
+    n_images = used_fallback.shape[0]
+    for i, j in itertools.permutations(range(n_images), 2):
+        if not used_fallback[i, j]:
+            return i, j
+
+    # If every edge used the in-plane fallback, the two handedness branches are
+    # identical everywhere, so the particular reference pair is immaterial.
+    return 0, 1
 
 
 def _estimate_relative_orientation_candidates(
@@ -422,7 +477,6 @@ def _estimate_pairwise_fallback(
     The mirrored handedness candidate is identical for this pure in-plane
     rotation, so the same matrix is returned for both branches.
 
-
     Parameters
     ----------
     theta_1_deg : float
@@ -433,17 +487,20 @@ def _estimate_pairwise_fallback(
     Returns
     -------
     numpy.ndarray
-        Rotation that maps the coordinates of the common line in image 2 to its 
-        coordinates in image 1.
+        Canonical rotation mapping coordinates from image 2 to image 1.
     numpy.ndarray
-        The mirrored handedness equivalent to the orientation. With this choice
-        for the fallback, the mirrored rotation is equal to the original one,
-        but we return it twice for consistency with the alignment methods.
+        Mirrored handedness candidate, equal to the first matrix.
     """
     delta_rad = np.deg2rad(theta_1_deg - theta_2_deg)
-    sin = np.sin(delta_rad)
-    cos = np.cos(delta_rad)
+    cos_delta = np.cos(delta_rad)
+    sin_delta = np.sin(delta_rad)
+
     rotation = np.array(
-        [[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64
+        [
+            [cos_delta, -sin_delta, 0.0],
+            [sin_delta, cos_delta, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
     )
     return rotation, rotation

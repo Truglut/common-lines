@@ -1,20 +1,15 @@
-"""
-Common-lines orientation estimation for cryo-EM.
+"""Estimate relative orientations from common lines in cryo-EM images."""
 
-This package provides a simple pipeline for estimating pairwise relative
-orientations from common lines, together with the lower-level building
-blocks used by the pipeline.
-"""
-
-from common_lines.main import (
+from .main import (
+    OrientationEstimationResult,
     build_relative_orientations_graph,
+    build_relative_orientations_graph_with_diagnostics,
     mirror_relative_orientations_graph,
 )
-from common_lines.centering import PrecenteringMethod, precenter_images
 
 __all__ = [
+    "OrientationEstimationResult",
     "build_relative_orientations_graph",
+    "build_relative_orientations_graph_with_diagnostics",
     "mirror_relative_orientations_graph",
-    "precenter_images",
-    "PrecenteringMethod",
 ]

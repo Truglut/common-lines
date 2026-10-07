@@ -38,7 +38,7 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
     assert np.allclose(direct, expected, atol=1.0e-12)
 
 
-def test_pipeline_uses_fallback_when_all_third_images_fail(monkeypatch):
+def _patch_pipeline_to_force_fallback(monkeypatch):
     angle_1 = np.array(
         [
             [0.0, 10.0, 25.0],
@@ -73,28 +73,50 @@ def test_pipeline_uses_fallback_when_all_third_images_fail(monkeypatch):
         raise ValueError("No valid triplet geometry")
 
     monkeypatch.setattr(main, "get_alignment_for_second_image", fail_triplet_estimation)
+    return angle_1, angle_2
+
+
+def test_pipeline_diagnostics_report_fallback_edges(monkeypatch):
+    angle_1, angle_2 = _patch_pipeline_to_force_fallback(monkeypatch)
 
     images = np.zeros((3, 5, 5), dtype=np.float64)
-    graph, used_fallback = main.build_relative_orientations_graph(
+    result = main.build_relative_orientations_graph_with_diagnostics(
         images,
         theta=np.array([0.0, 90.0]),
         n_third=1,
+        precenter_method=None,
     )
 
     expected_fallback_mask = ~np.eye(3, dtype=bool)
-    assert np.array_equal(used_fallback, expected_fallback_mask)
+    assert np.array_equal(result.used_fallback, expected_fallback_mask)
+    assert result.handedness_reference == (0, 1)
 
     for i in range(3):
-        assert np.allclose(graph[i, i], np.eye(3))
+        assert np.allclose(result.graph[i, i], np.eye(3))
         for j in range(3):
             if i == j:
                 continue
 
-            _assert_rotation_matrix(graph[i, j])
+            _assert_rotation_matrix(result.graph[i, j])
             common_line_i = _image_plane_direction(angle_1[i, j])
             common_line_j = _image_plane_direction(angle_2[i, j])
             assert np.allclose(
-                graph[i, j] @ common_line_j,
+                result.graph[i, j] @ common_line_j,
                 common_line_i,
                 atol=1.0e-12,
             )
+
+
+def test_automatic_handedness_reference_avoids_fallback_edge():
+    used_fallback = np.array(
+        [
+            [False, True, False],
+            [True, False, False],
+            [False, False, False],
+        ]
+    )
+
+    reference = main._resolve_handedness_reference(used_fallback, requested=None)
+
+    assert reference == (0, 2)
+    assert not used_fallback[reference]

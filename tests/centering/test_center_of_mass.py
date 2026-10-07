@@ -3,6 +3,7 @@ import numpy as np
 from common_lines.centering import (
     estimate_center_of_mass_shift,
     estimate_center_of_mass_shifts,
+    estimate_shifts,
 )
 from common_lines.centering.center_of_mass import (
     compute_center_of_mass,
@@ -85,6 +86,23 @@ def test_estimate_center_of_mass_shifts_matches_scalar():
     np.testing.assert_allclose(
         batch_shifts,
         scalar_shifts,
+        atol=1.0e-12,
+        rtol=0.0,
+    )
+
+
+def test_default_center_of_mass_preprocessing_removes_constant_background():
+    images = np.full((1, 9, 9), 5.0, dtype=np.float64)
+    images[0, 2, 4] += 10.0
+
+    # The default circular mask has radius 9 / 2 pixels. Its complement contains
+    # only the constant background, so background subtraction leaves one positive
+    # mass at (2, 4). The target center is (4, 4).
+    shifts = estimate_shifts(images)
+
+    np.testing.assert_allclose(
+        shifts[0],
+        (2.0, 0.0),
         atol=1.0e-12,
         rtol=0.0,
     )
