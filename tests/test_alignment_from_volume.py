@@ -54,12 +54,12 @@ def _solve_detected_triplet(
     angle_23_in_2, angle_23_in_3 = _oriented_pair(detected[2], theta)
 
     return compute_transformation_matrices_from_angles(
-        angle_12_in_1=angle_12_in_1,
-        angle_12_in_2=angle_12_in_2,
-        angle_13_in_1=angle_13_in_1,
-        angle_13_in_3=angle_13_in_3,
-        angle_23_in_2=angle_23_in_2,
-        angle_23_in_3=angle_23_in_3,
+        angle_12_in_1_deg=angle_12_in_1,
+        angle_12_in_2_deg=angle_12_in_2,
+        angle_13_in_1_deg=angle_13_in_1,
+        angle_13_in_3_deg=angle_13_in_3,
+        angle_23_in_2_deg=angle_23_in_2,
+        angle_23_in_3_deg=angle_23_in_3,
     )
 
 
@@ -275,12 +275,12 @@ def test_detect_common_lines_keeps_compact_array_outputs_for_a_single_pair():
 def test_hand_checkable_orthogonal_common_lines_return_both_handednesses():
     """Exact common-line angles give the expected solution and its mirror."""
     direct, mirrored = compute_transformation_matrices_from_angles(
-        angle_12_in_1=0.0,
-        angle_12_in_2=0.0,
-        angle_13_in_1=90.0,
-        angle_13_in_3=0.0,
-        angle_23_in_2=90.0,
-        angle_23_in_3=90.0,
+        angle_12_in_1_deg=0.0,
+        angle_12_in_2_deg=0.0,
+        angle_13_in_1_deg=90.0,
+        angle_13_in_3_deg=0.0,
+        angle_23_in_2_deg=90.0,
+        angle_23_in_3_deg=90.0,
     )
     expected = (EXPECTED_R1, EXPECTED_R2, EXPECTED_R3)
     expected_mirrored = mirror_transformation_matrices(expected)

@@ -45,12 +45,12 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
     # common-line directions, including any 180-degree correction introduced
     # when detection finds a reversed profile.
     angles = {
-        "angle_12_in_1": 20.0,
-        "angle_12_in_2": 70.0,
-        "angle_13_in_1": 110.0,
-        "angle_13_in_3": 35.0,
-        "angle_23_in_2": 145.0,
-        "angle_23_in_3": 125.0,
+        "angle_12_in_1_deg": 20.0,
+        "angle_12_in_2_deg": 70.0,
+        "angle_13_in_1_deg": 110.0,
+        "angle_13_in_3_deg": 35.0,
+        "angle_23_in_2_deg": 145.0,
+        "angle_23_in_3_deg": 125.0,
     }
 
     direct, mirrored = compute_transformation_matrices_from_angles(**angles)
@@ -81,12 +81,12 @@ def test_recovers_known_configuration_in_both_handednesses():
     # Both returned branches must preserve that geometry and be related by the
     # global handedness reflection.
     direct, mirrored = compute_transformation_matrices_from_angles(
-        angle_12_in_1=0.0,
-        angle_12_in_2=0.0,
-        angle_13_in_1=90.0,
-        angle_13_in_3=0.0,
-        angle_23_in_2=90.0,
-        angle_23_in_3=90.0,
+        angle_12_in_1_deg=0.0,
+        angle_12_in_2_deg=0.0,
+        angle_13_in_1_deg=90.0,
+        angle_13_in_3_deg=0.0,
+        angle_23_in_2_deg=90.0,
+        angle_23_in_3_deg=90.0,
     )
 
     for rotations in (direct, mirrored):
@@ -108,10 +108,10 @@ def test_rejects_degenerate_common_lines_in_reference_image():
     # a valid 3D frame and the formula would divide by sin(angle_13 - angle_12).
     with pytest.raises(ValueError, match="degenerate|parallel|sin"):
         compute_transformation_matrices_from_angles(
-            angle_12_in_1=30.0,
-            angle_12_in_2=10.0,
-            angle_13_in_1=30.0,
-            angle_13_in_3=80.0,
-            angle_23_in_2=120.0,
-            angle_23_in_3=45.0,
+            angle_12_in_1_deg=30.0,
+            angle_12_in_2_deg=10.0,
+            angle_13_in_1_deg=30.0,
+            angle_13_in_3_deg=80.0,
+            angle_23_in_2_deg=120.0,
+            angle_23_in_3_deg=45.0,
         )

@@ -264,12 +264,12 @@ def _estimate_relative_orientation_candidates(
 
             try:
                 direct_r2, mirrored_r2 = get_alignment_for_second_image(
-                    angle_12_in_1=float(angle_1[i, j]),
-                    angle_12_in_2=float(angle_2[i, j]),
-                    angle_13_in_1=float(angle_1[i, k]),
-                    angle_13_in_3=float(angle_2[i, k]),
-                    angle_23_in_2=float(angle_1[j, k]),
-                    angle_23_in_3=float(angle_2[j, k]),
+                    angle_12_in_1_deg=float(angle_1[i, j]),
+                    angle_12_in_2_deg=float(angle_2[i, j]),
+                    angle_13_in_1_deg=float(angle_1[i, k]),
+                    angle_13_in_3_deg=float(angle_2[i, k]),
+                    angle_23_in_2_deg=float(angle_1[j, k]),
+                    angle_23_in_3_deg=float(angle_2[j, k]),
                 )
             except ValueError:
                 continue

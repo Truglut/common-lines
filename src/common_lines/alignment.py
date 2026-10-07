@@ -12,7 +12,7 @@ def compute_transformation_matrices(
     common_line_result_12: CommonLineResult,
     common_line_result_13: CommonLineResult,
     common_line_result_23: CommonLineResult,
-    theta: np.ndarray,
+    theta_deg: np.ndarray,
     eps: float = 1.0e-6,
 ) -> HandednessPair:
     """
@@ -30,9 +30,9 @@ def compute_transformation_matrices(
         Detected oriented common line between images 1 and 3.
     common_line_result_23 : CommonLineResult
         Detected oriented common line between images 2 and 3.
-    theta : np.ndarray
+    theta_deg : np.ndarray
         Angular grid used to generate the sinograms from which the common lines
-        were detected.
+        were detected, in degrees.
     eps : float, optional
         Numerical tolerance used to reject degenerate or inconsistent triplets.
 
@@ -51,33 +51,33 @@ def compute_transformation_matrices(
     """
     # Extract the angles of the common lines from the results
     angle_12_in_1, angle_12_in_2 = common_line_result_12.oriented_angles(
-        theta_1=theta, theta_2=theta
+        theta_1=theta_deg, theta_2=theta_deg
     )
     angle_13_in_1, angle_13_in_3 = common_line_result_13.oriented_angles(
-        theta_1=theta, theta_2=theta
+        theta_1=theta_deg, theta_2=theta_deg
     )
     angle_23_in_2, angle_23_in_3 = common_line_result_23.oriented_angles(
-        theta_1=theta, theta_2=theta
+        theta_1=theta_deg, theta_2=theta_deg
     )
 
     return compute_transformation_matrices_from_angles(
-        angle_12_in_1=float(angle_12_in_1),
-        angle_12_in_2=float(angle_12_in_2),
-        angle_13_in_1=float(angle_13_in_1),
-        angle_13_in_3=float(angle_13_in_3),
-        angle_23_in_2=float(angle_23_in_2),
-        angle_23_in_3=float(angle_23_in_3),
+        angle_12_in_1_deg=float(angle_12_in_1),
+        angle_12_in_2_deg=float(angle_12_in_2),
+        angle_13_in_1_deg=float(angle_13_in_1),
+        angle_13_in_3_deg=float(angle_13_in_3),
+        angle_23_in_2_deg=float(angle_23_in_2),
+        angle_23_in_3_deg=float(angle_23_in_3),
         eps=eps,
     )
 
 
 def compute_transformation_matrices_from_angles(
-    angle_12_in_1: float,
-    angle_12_in_2: float,
-    angle_13_in_1: float,
-    angle_13_in_3: float,
-    angle_23_in_2: float,
-    angle_23_in_3: float,
+    angle_12_in_1_deg: float,
+    angle_12_in_2_deg: float,
+    angle_13_in_1_deg: float,
+    angle_13_in_3_deg: float,
+    angle_23_in_2_deg: float,
+    angle_23_in_3_deg: float,
     eps: float = 1.0e-6,
 ) -> HandednessPair:
     """
@@ -122,6 +122,14 @@ def compute_transformation_matrices_from_angles(
     mirrored configurations. Neither returned branch should be treated as the
     physically correct hand without additional information.
     """
+    # Every angle from this point on should be in radians
+    angle_12_in_1 = _angle_to_rad(angle_12_in_1_deg, "angle_12_in_1")
+    angle_12_in_2 = _angle_to_rad(angle_12_in_2_deg, "angle_12_in_2")
+    angle_13_in_1 = _angle_to_rad(angle_13_in_1_deg, "angle_13_in_1")
+    angle_13_in_3 = _angle_to_rad(angle_13_in_3_deg, "angle_13_in_3")
+    angle_23_in_2 = _angle_to_rad(angle_23_in_2_deg, "angle_23_in_2")
+    angle_23_in_3 = _angle_to_rad(angle_23_in_3_deg, "angle_23_in_3")
+
     c_12, c_13, c_23 = _get_common_lines_from_angles(
         angle_12_in_1,
         angle_12_in_2,
@@ -148,24 +156,18 @@ def compute_transformation_matrices_from_angles(
 
 
 def _get_common_lines_from_angles(
-    angle_12_in_1: float,
-    angle_12_in_2: float,
-    angle_13_in_1: float,
-    angle_13_in_3: float,
-    angle_23_in_2: float,
-    angle_23_in_3: float,
+    angle_12_in_1_rad: float,
+    angle_12_in_2_rad: float,
+    angle_13_in_1_rad: float,
+    angle_13_in_3_rad: float,
+    angle_23_in_2_rad: float,
+    angle_23_in_3_rad: float,
     eps: float = 1.0e-6,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    # Extract the angles of the common lines from the results
-    angle_12_in_1 = _angle_to_rad(angle_12_in_1, "angle_12_in_1")
-    angle_12_in_2 = _angle_to_rad(angle_12_in_2, "angle_12_in_2")
-
-    angle_13_in_1 = _angle_to_rad(angle_13_in_1, "angle_13_in_1")
-    angle_13_in_3 = _angle_to_rad(angle_13_in_3, "angle_13_in_3")
-
-    angle_23_in_2 = _angle_to_rad(angle_23_in_2, "angle_23_in_2")
-    angle_23_in_3 = _angle_to_rad(angle_23_in_3, "angle_23_in_3")
-
+    """
+    Gets the 3D coordinates of the common lines among three images from their measured
+    angles, in radians.
+    """
     c_12 = np.zeros(3)
     c_13 = np.zeros(3)
     c_23 = np.zeros(3)
@@ -173,16 +175,16 @@ def _get_common_lines_from_angles(
     ## Compute the 3D coordinates of the common lines
     # The common lines contained in image 1 lie in the XY plane because
     # image 1 is fixed to the identity matrix
-    c_12[0] = np.cos(angle_12_in_1)
-    c_12[1] = np.sin(angle_12_in_1)
-    c_13[0] = np.cos(angle_13_in_1)
-    c_13[1] = np.sin(angle_13_in_1)
+    c_12[0] = np.cos(angle_12_in_1_rad)
+    c_12[1] = np.sin(angle_12_in_1_rad)
+    c_13[0] = np.cos(angle_13_in_1_rad)
+    c_13[1] = np.sin(angle_13_in_1_rad)
 
     # The common line between image 2 and 3 is computed using the relative angles
     # between the three common lines
-    a = angle_13_in_1 - angle_12_in_1
-    b = angle_23_in_2 - angle_12_in_2
-    c = angle_23_in_3 - angle_13_in_3
+    a = angle_13_in_1_rad - angle_12_in_1_rad
+    b = angle_23_in_2_rad - angle_12_in_2_rad
+    c = angle_23_in_3_rad - angle_13_in_3_rad
 
     # Check for degenerate geometric configurations
     sin_a = np.sin(a)
@@ -206,19 +208,28 @@ def _get_common_lines_from_angles(
 
 
 def get_alignment_for_second_image(
-    angle_12_in_1: float,
-    angle_12_in_2: float,
-    angle_13_in_1: float,
-    angle_13_in_3: float,
-    angle_23_in_2: float,
-    angle_23_in_3: float,
+    angle_12_in_1_deg: float,
+    angle_12_in_2_deg: float,
+    angle_13_in_1_deg: float,
+    angle_13_in_3_deg: float,
+    angle_23_in_2_deg: float,
+    angle_23_in_3_deg: float,
     eps: float = 1.0e-6,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute both handedness solutions from oriented common-line angles only for the
     second image ("image 2"). This is useful for cases where the geometric
     configuration allows for calculating the alignment of image 2, but not image 3.
+    Input angles are in degrees.
     """
+    # Every angle from this point on should be in radians
+    angle_12_in_1 = _angle_to_rad(angle_12_in_1_deg, "angle_12_in_1")
+    angle_12_in_2 = _angle_to_rad(angle_12_in_2_deg, "angle_12_in_2")
+    angle_13_in_1 = _angle_to_rad(angle_13_in_1_deg, "angle_13_in_1")
+    angle_13_in_3 = _angle_to_rad(angle_13_in_3_deg, "angle_13_in_3")
+    angle_23_in_2 = _angle_to_rad(angle_23_in_2_deg, "angle_23_in_2")
+    angle_23_in_3 = _angle_to_rad(angle_23_in_3_deg, "angle_23_in_3")
+
     c_12, _, c_23 = _get_common_lines_from_angles(
         angle_12_in_1,
         angle_12_in_2,
@@ -270,9 +281,9 @@ def mirror_transformation_matrices(
 
 
 def _compute_matrix_from_common_lines(
-    theta_a: float,
+    theta_a_rad: float,
     c_a: np.ndarray,
-    theta_b: float,
+    theta_b_rad: float,
     c_b: np.ndarray,
     *,
     eps: float,
@@ -284,11 +295,11 @@ def _compute_matrix_from_common_lines(
 
     Parameters
     ----------
-    theta_a : float
+    theta_a_rad : float
         Detected angle of the first common line in the image, in radians.
     c_a : np.ndarray
         3D coordinates of the first common line.
-    theta_b : float
+    theta_b_rad : float
         Detected angle of the second common line in the image, in radians.
     c_b : np.ndarray
         3D coordinates of the second common line.
@@ -302,7 +313,7 @@ def _compute_matrix_from_common_lines(
         (the reference is implicit in the 3D coordinates of the common lines).
     """
     # Read angle of both common lines with image axes and compute difference
-    sin_diff = np.sin(theta_b - theta_a)
+    sin_diff = np.sin(theta_b_rad - theta_a_rad)
     if abs(sin_diff) < eps:
         raise ValueError(
             "Degenerate configuration: common lines in one image are parallel."
@@ -312,8 +323,8 @@ def _compute_matrix_from_common_lines(
 
     # The first two rows of the rotation matrix are obtained by solving a linear system
     # given by the coordinates of the two common lines
-    rotation_matrix[0, :] = (np.sin(theta_b) * c_a - np.sin(theta_a) * c_b) / sin_diff
-    rotation_matrix[1, :] = (np.cos(theta_a) * c_b - np.cos(theta_b) * c_a) / sin_diff
+    rotation_matrix[0, :] = (np.sin(theta_b_rad) * c_a - np.sin(theta_a_rad) * c_b) / sin_diff
+    rotation_matrix[1, :] = (np.cos(theta_a_rad) * c_b - np.cos(theta_b_rad) * c_a) / sin_diff
 
     # The last row is the projection direction: orthogonal to both common lines, and
     # unitary
