@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "common-lines"
 version = "0.1.0"
-description = "Batch Radon transforms for common-line detection in cryo-EM images."
+description = "Estimate relative particle orientations from common lines in cryo-EM images."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
-    { name = "Andrés" }
+    { name = "Andrés Contreras" }
 ]
 dependencies = [
     "numpy>=1.24",

@@ -68,32 +68,40 @@ def build_relative_orientations_graph(
 
     Parameters
     ----------
-    images
+    images : np.ndarray
         Input images with shape ``(n_images, height, width)``.
-    n_third
+    n_third : int
         Maximum number of valid third images used to estimate each ordered pair.
         Must lie in ``[1, n_images - 2]``.
-    random_seed
+    random_seed : int, optional
         Seed used to randomize the order in which third images are tested.
-    handedness_reference
-        Ordered pair used to choose one of the two global handedness solutions.
-        Its first candidate is selected arbitrarily, and the remaining branches
-        are chosen relative to it.
-    theta
+    handedness_reference : tuple[int, int], optional
+        Ordered image pair used to fix one of the two global handedness
+        solutions. Its first candidate is selected arbitrarily, and the
+        remaining branches are chosen consistently with it.
+
+        If ``None``, an edge estimated without fallback is selected
+        automatically when possible. If every edge used the fallback, the
+        particular reference is irrelevant and ``(0, 1)`` is used.
+    theta : np.ndarray, optional
         Angular grid in degrees used to compute the sinograms. If None,
         ``DEFAULT_THETA`` is used.
-    precenter_method
+    precenter_method : PrecenteringMethod, optional
         Method used to estimate particle translations before common-line
         detection. ``"center_of_mass"`` is used by default. Pass ``None`` to
         disable precentering.
-    common_line_block_size
+    common_line_block_size : int, optional
         Number of images per correlation block in all-pairs common-line
         detection. Larger values may improve throughput but require more memory.
-    preprocessing_options
+        Default is 4.
+    preprocessing_options : PreprocessingOptions, optional
         Preprocessing used both to estimate precentering shifts and, after
         centering, before common-line detection. ``None`` selects the standard
-        circular-mask/background-subtraction defaults. Pass
-        ``PreprocessingOptions()`` to disable preprocessing in both stages.
+        circular-mask/background-subtraction defaults. 
+        Pass ``PreprocessingOptions()`` to disable preprocessing in both stages 
+        (i.e., use the raw input images both to estimate the precentering shifts and
+        their precentered version for common-line detection; this does not disable 
+        precentering itself).
 
     Returns
     -------
@@ -110,9 +118,6 @@ def build_relative_orientations_graph(
         reference system to images ``i`` and ``j``, then ideally
 
             graph[i, j] = R_j @ R_i.T
-
-        Pairwise estimates are computed independently, so the estimated graph is
-        not explicitly constrained to satisfy exact inverse or cycle consistency.
 
     Notes
     -----
@@ -149,6 +154,11 @@ def build_relative_orientations_graph_with_diagnostics(
     """
     Estimate the directed relative-orientation graph and return diagnostics.
 
+    This function uses the same inputs and estimation pipeline as
+    ``build_relative_orientations_graph``, but additionally reports which
+    edges required the pairwise fallback and which edge was used to fix the
+    global handedness.
+
     The graph follows the same convention as
     ``build_relative_orientations_graph``:
 
@@ -159,8 +169,7 @@ def build_relative_orientations_graph_with_diagnostics(
     Returns
     -------
     OrientationEstimationResult
-        Contains the orientation graph, a boolean fallback mask, and the
-        handedness reference actually used.
+        Orientation graph and associated estimation diagnostics.
     """
     images, theta_array = _validate_pipeline_inputs(
         images,
@@ -211,7 +220,32 @@ def build_relative_orientations_graph_with_diagnostics(
 
 
 def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
-    """Return the opposite-handed version of a relative-orientation graph."""
+    """
+    Return the opposite-handed solution for a relative-orientation graph.
+
+    Every relative rotation is conjugated with
+
+        J = diag(1, 1, -1)
+
+    so that
+
+        mirrored[i, j] = J @ graph[i, j] @ J.
+
+    The returned graph follows the same coordinate convention as the input:
+
+        v_j = mirrored[i, j] @ v_i
+
+    Parameters
+    ----------
+    graph
+        Relative-orientation graph with shape
+        ``(n_images, n_images, 3, 3)``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Graph representing the globally mirrored handedness solution.
+    """
     graph = np.asarray(graph, dtype=np.float64)
     if graph.ndim != 4 or graph.shape[2:] != (3, 3):
         raise ValueError(

@@ -22,12 +22,25 @@ def estimate_shifts(
     **kwargs,
 ) -> np.ndarray:
     """
-    Estimate the shifts required to approximately center an image batch.
+    Estimate translations that approximately center an image batch.
 
-    When ``preprocessing_options`` is not supplied, an inscribed circular mask is used,
-    the background is estimated from the region outside that mask, and negative values
-    are left unchanged. Pass ``PreprocessingOptions()`` explicitly to disable this
-    preprocessing.
+    By default, the images are preprocessed with an inscribed circular mask
+    and background subtraction before the shifts are estimated. The same
+    preprocessing default is used for both ``"center_of_mass"`` and
+    ``"reflection"``.
+
+    Pass ``PreprocessingOptions()`` explicitly to estimate shifts from the
+    unprocessed images.
+
+    Parameters
+    ----------
+    images
+        Image batch with shape ``(n_images, height, width)``.
+    method
+        Centering method. Either ``"center_of_mass"`` or ``"reflection"``.
+    preprocessing_options
+        Preprocessing used only for estimating the shifts. The resulting
+        shifts are applied to the original input images.
     """
     if preprocessing_options is None:
         preprocessing_options = default_preprocessing_options(images)
@@ -56,7 +69,27 @@ def precenter_images(
     preprocessing_options: PreprocessingOptions | None = None,
     **kwargs,
 ) -> np.ndarray:
-    """Approximately center an image batch and return shifted copies."""
+    """
+    Estimate particle shifts and apply them to the original images.
+
+    ``preprocessing_options`` affects only the images used to estimate the
+    shifts. Once the shifts have been estimated, they are applied to the
+    original input images.
+
+    Parameters
+    ----------
+    images
+        Image batch with shape ``(n_images, height, width)``.
+    method
+        Method used to estimate the translations.
+    preprocessing_options
+        Preprocessing used when estimating the shifts.
+
+    Returns
+    -------
+    numpy.ndarray
+        Shifted copies of the original images.
+    """
     shifts = estimate_shifts(
         images,
         method=method,
