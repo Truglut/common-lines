@@ -288,7 +288,8 @@ def test_pipeline_resolves_default_preprocessing_once_and_reuses_it(monkeypatch)
     images = np.zeros((3, 5, 5), dtype=np.float64)
     centered_images = np.full_like(images, 2.0)
     detection_images = np.full_like(images, 3.0)
-    options = main.PreprocessingOptions(
+
+    resolved_options = main.PreprocessingOptions(
         mask=np.ones((5, 5), dtype=np.float64),
         subtract_background=False,
         clip_negative=True,
@@ -296,21 +297,37 @@ def test_pipeline_resolves_default_preprocessing_once_and_reuses_it(monkeypatch)
 
     calls = []
 
+    def fake_defaults(input_images):
+        calls.append(("defaults", input_images, resolved_options))
+        assert input_images is images
+        return resolved_options
+
     def fake_precenter(input_images, *, method, preprocessing_options):
         calls.append(("precenter", input_images, preprocessing_options))
+
         assert input_images is images
         assert method == "center_of_mass"
+        assert preprocessing_options is resolved_options
+
         return centered_images
 
     def fake_preprocess(input_images, *, options):
         calls.append(("preprocess", input_images, options))
+
         assert input_images is centered_images
+        assert options is resolved_options
+
         return detection_images
 
     def fake_sinograms(input_images, *, theta):
         calls.append(("sinograms", input_images, None))
+
         assert input_images is detection_images
-        return np.zeros((3, len(theta), 5), dtype=np.float64)
+
+        return np.zeros(
+            (images.shape[0], len(theta), images.shape[-1]),
+            dtype=np.float64,
+        )
 
     angle_1 = np.array(
         [
@@ -331,6 +348,14 @@ def test_pipeline_resolves_default_preprocessing_once_and_reuses_it(monkeypatch)
         def oriented_angles(self, theta):
             return angle_1, angle_2
 
+    def force_fallback(**kwargs):
+        raise ValueError("Force fallback")
+
+    monkeypatch.setattr(
+        main,
+        "default_preprocessing_options",
+        fake_defaults,
+    )
     monkeypatch.setattr(main, "precenter_images", fake_precenter)
     monkeypatch.setattr(main, "preprocess_images", fake_preprocess)
     monkeypatch.setattr(main, "batch_common_line_sinograms", fake_sinograms)
@@ -342,15 +367,22 @@ def test_pipeline_resolves_default_preprocessing_once_and_reuses_it(monkeypatch)
     monkeypatch.setattr(
         main,
         "get_transformation_for_second_image",
-        lambda **kwargs: (_ for _ in ()).throw(ValueError("force fallback")),
+        force_fallback,
     )
 
     main.build_relative_orientations_graph(
         images,
         theta=np.array([0.0, 90.0]),
-        preprocessing_options=options,
+        # Deliberately omit preprocessing_options.
     )
 
-    assert [name for name, _, _ in calls] == ["precenter", "preprocess", "sinograms"]
-    assert calls[0][2] is options
-    assert calls[1][2] is options
+    assert [name for name, _, _ in calls] == [
+        "defaults",
+        "precenter",
+        "preprocess",
+        "sinograms",
+    ]
+
+    # The defaults are resolved once and the exact same object is reused.
+    assert calls[1][2] is resolved_options
+    assert calls[2][2] is resolved_options
