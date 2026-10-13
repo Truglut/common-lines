@@ -25,9 +25,10 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
 
     common_line_1 = _image_plane_direction(theta_1_deg)
     common_line_2 = _image_plane_direction(theta_2_deg)
-    assert np.allclose(direct @ common_line_2, common_line_1, atol=1.0e-12)
 
-    delta_rad = np.deg2rad(theta_1_deg - theta_2_deg)
+    assert np.allclose(direct @ common_line_1, common_line_2, atol=1.0e-12)
+
+    delta_rad = np.deg2rad(theta_2_deg - theta_1_deg)
     expected = np.array(
         [
             [np.cos(delta_rad), -np.sin(delta_rad), 0.0],
@@ -35,6 +36,7 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
             [0.0, 0.0, 1.0],
         ]
     )
+
     assert np.allclose(direct, expected, atol=1.0e-12)
 
 
@@ -72,7 +74,9 @@ def _patch_pipeline_to_force_fallback(monkeypatch):
     def fail_triplet_estimation(**kwargs):
         raise ValueError("No valid triplet geometry")
 
-    monkeypatch.setattr(main, "get_alignment_for_second_image", fail_triplet_estimation)
+    monkeypatch.setattr(
+        main, "get_transformation_for_second_image", fail_triplet_estimation
+    )
     return angle_1, angle_2
 
 
@@ -93,17 +97,18 @@ def test_pipeline_diagnostics_report_fallback_edges(monkeypatch):
 
     for i in range(3):
         assert np.allclose(result.graph[i, i], np.eye(3))
+
         for j in range(3):
             if i == j:
                 continue
 
             _assert_rotation_matrix(result.graph[i, j])
+
             common_line_i = _image_plane_direction(angle_1[i, j])
             common_line_j = _image_plane_direction(angle_2[i, j])
+
             assert np.allclose(
-                result.graph[i, j] @ common_line_j,
-                common_line_i,
-                atol=1.0e-12,
+                result.graph[i, j] @ common_line_i, common_line_j, atol=1.0e-12
             )
 
 
@@ -142,7 +147,144 @@ def test_automatic_handedness_reference_avoids_fallback_edge():
     assert not used_fallback[reference]
 
 
-def test_pipeline_reuses_preprocessing_after_precentering(monkeypatch):
+def test_orientation_graph_uses_i_to_j_coordinate_convention():
+    """graph[i, j] transforms coordinates from image i to image j."""
+
+    # Three hand-checkable frames. Each R_i maps coordinates from the
+    # reference system into the coordinate system of image i.
+    R0 = np.eye(3)
+    R1 = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, -1.0, 0.0],
+        ]
+    )
+    R2 = np.array(
+        [
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+        ]
+    )
+    frames = (R0, R1, R2)
+
+    # Exact oriented common-line angles for these three frames.
+    #
+    # angle_1[i, j]: angle in image i
+    # angle_2[i, j]: corresponding angle in image j
+    angle_1 = np.array(
+        [
+            [0.0, 0.0, 90.0],
+            [0.0, 0.0, 90.0],
+            [0.0, 90.0, 0.0],
+        ]
+    )
+    angle_2 = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 90.0],
+            [90.0, 90.0, 0.0],
+        ]
+    )
+
+    candidates, used_fallback = main._estimate_relative_orientation_candidates(
+        angle_1,
+        angle_2,
+        n_third=1,
+        random_seed=0,
+    )
+
+    assert not np.any(used_fallback)
+
+    graph = main._select_consistent_handedness(
+        candidates,
+        reference_pair=(0, 1),
+    )
+
+    for i in range(3):
+        for j in range(3):
+            expected = frames[j] @ frames[i].T
+            assert np.allclose(graph[i, j], expected, atol=1.0e-12)
+
+
+def test_fallback_and_reconstitution_edges_share_i_to_j_convention(monkeypatch):
+    """Fallback and reconstructed edges must use the same graph convention."""
+
+    # Non-degenerate common-line geometry already used by the alignment tests.
+    angle_1 = np.array(
+        [
+            [0.0, 20.0, 110.0],
+            [70.0, 0.0, 145.0],
+            [35.0, 125.0, 0.0],
+        ]
+    )
+    angle_2 = np.array(
+        [
+            [0.0, 70.0, 35.0],
+            [20.0, 0.0, 125.0],
+            [110.0, 145.0, 0.0],
+        ]
+    )
+
+    real_solver = main.get_transformation_for_second_image
+
+    def solver_with_one_forced_failure(**kwargs):
+        # Force only the directed edge 0 -> 1 to use the pairwise fallback.
+        if (
+            kwargs["angle_12_in_1_deg"] == 20.0
+            and kwargs["angle_12_in_2_deg"] == 70.0
+        ):
+            raise ValueError("Force fallback for edge 0 -> 1")
+
+        return real_solver(**kwargs)
+
+    monkeypatch.setattr(
+        main,
+        "get_transformation_for_second_image",
+        solver_with_one_forced_failure,
+    )
+
+    candidates, used_fallback = main._estimate_relative_orientation_candidates(
+        angle_1,
+        angle_2,
+        n_third=1,
+        random_seed=0,
+    )
+
+    expected_fallback = np.zeros((3, 3), dtype=bool)
+    expected_fallback[0, 1] = True
+    assert np.array_equal(used_fallback, expected_fallback)
+
+    reference_pair = main._resolve_handedness_reference(
+        used_fallback,
+        requested=None,
+    )
+    assert not used_fallback[reference_pair]
+
+    graph = main._select_consistent_handedness(
+        candidates,
+        reference_pair=reference_pair,
+    )
+
+    for i in range(3):
+        for j in range(3):
+            if i == j:
+                continue
+
+            common_line_i = _image_plane_direction(angle_1[i, j])
+            common_line_j = _image_plane_direction(angle_2[i, j])
+
+            assert np.allclose(
+                graph[i, j] @ common_line_i,
+                common_line_j,
+                atol=1.0e-12,
+            )
+
+
+def test_pipeline_resolves_default_preprocessing_once_and_reuses_it(monkeypatch):
+    """The same resolved defaults are used for centering and detection."""
+
     images = np.zeros((3, 5, 5), dtype=np.float64)
     centered_images = np.full_like(images, 2.0)
     detection_images = np.full_like(images, 3.0)
@@ -199,7 +341,7 @@ def test_pipeline_reuses_preprocessing_after_precentering(monkeypatch):
     )
     monkeypatch.setattr(
         main,
-        "get_alignment_for_second_image",
+        "get_transformation_for_second_image",
         lambda **kwargs: (_ for _ in ()).throw(ValueError("force fallback")),
     )
 

@@ -6,9 +6,8 @@ import pytest
 from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
     compute_transformation_matrices_from_angles,
-    get_alignment_for_second_image,
+    get_transformation_for_second_image,
 )
-
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -33,12 +32,12 @@ def _assert_common_line_correspondence(
     direction_a = _image_plane_direction(angle_a)
     direction_b = _image_plane_direction(angle_b)
 
-    # Transformation matrices map global coordinates into image coordinates.
+    # Transformation matrices map reference coordinates into image coordinates.
     # Recover the global common line from image a and express it in image b.
-    common_line_global = R_a.T @ direction_a
+    common_line_reference = R_a.T @ direction_a
 
-    assert np.allclose(R_a @ common_line_global, direction_a, atol=1e-10)
-    assert np.allclose(R_b @ common_line_global, direction_b, atol=1e-10)
+    assert np.allclose(R_a @ common_line_reference, direction_a, atol=1e-10)
+    assert np.allclose(R_b @ common_line_reference, direction_b, atol=1e-10)
 
 
 def test_recovers_both_handednesses_consistent_with_all_common_lines():
@@ -62,15 +61,9 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
         _assert_rotation_matrix(R3)
         assert np.allclose(R1, np.eye(3))
 
-        _assert_common_line_correspondence(
-            R1, R2, 20.0, 70.0
-        )
-        _assert_common_line_correspondence(
-            R1, R3, 110.0, 35.0
-        )
-        _assert_common_line_correspondence(
-            R2, R3, 145.0, 125.0
-        )
+        _assert_common_line_correspondence(R1, R2, 20.0, 70.0)
+        _assert_common_line_correspondence(R1, R3, 110.0, 35.0)
+        _assert_common_line_correspondence(R2, R3, 145.0, 125.0)
 
     J = HANDEDNESS_REFLECTION
     for R_direct, R_mirrored in zip(direct, mirrored):
@@ -88,8 +81,10 @@ def test_second_image_alignment_uses_degree_inputs_consistently():
         "angle_23_in_3_deg": 125.0,
     }
 
-    direct_triplet, mirrored_triplet = compute_transformation_matrices_from_angles(**angles)
-    direct_r2, mirrored_r2 = get_alignment_for_second_image(**angles)
+    direct_triplet, mirrored_triplet = compute_transformation_matrices_from_angles(
+        **angles
+    )
+    direct_r2, mirrored_r2 = get_transformation_for_second_image(**angles)
 
     _assert_rotation_matrix(direct_r2)
     _assert_rotation_matrix(mirrored_r2)

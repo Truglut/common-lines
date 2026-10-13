@@ -3,7 +3,10 @@ import itertools
 
 import numpy as np
 
-from common_lines.alignment import HANDEDNESS_REFLECTION, get_alignment_for_second_image
+from common_lines.alignment import (
+    HANDEDNESS_REFLECTION,
+    get_transformation_for_second_image,
+)
 from common_lines.centering import precenter_images, PrecenteringMethod
 from common_lines.centering.preprocessing import (
     PreprocessingOptions,
@@ -25,11 +28,17 @@ class OrientationEstimationResult:
     Attributes
     ----------
     graph: numpy.ndarray
-        Estimated orientation graph after selecting one consistent handedness.
-        ``graph[i, j]`` transforms coordinates from image j's frame to image i's
-        frame.
-        This is only one of the two possible handedness solutions, with the other
-        one being given by ``mirror_relative_orientations_graph(graph)``.
+        Estimated directed relative-orientation graph with shape
+        ``(n_images, n_images, 3, 3)``.
+
+        ``graph[i, j]`` transforms vector coordinates from the coordinate system
+        of image ``i`` to that of image ``j``:
+
+            v_j = graph[i, j] @ v_i
+
+        The graph contains one of the two globally mirrored handedness solutions.
+        The other is obtained with
+        ``mirror_relative_orientations_graph(graph)``.
     used_fallback: numpy.ndarray
         Boolean array of shape ``(n_images, n_images)``, indicating image pairs
         where the estimated relative orientation was resolved using a fallback
@@ -73,15 +82,13 @@ def build_relative_orientations_graph(
     theta
         Angular grid in degrees used to compute the sinograms. If None,
         ``DEFAULT_THETA`` is used.
-    precenter
-        If True, approximately center all particles before computing their
-        sinograms. Horizontal and vertical corrections are estimated in batch
-        from correlations with reflected versions of the original images.
+    precenter_method
+        Method used to estimate particle translations before common-line
+        detection. ``"center_of_mass"`` is used by default. Pass ``None`` to
+        disable precentering.
     common_line_block_size
         Number of images per correlation block in all-pairs common-line
         detection. Larger values may improve throughput but require more memory.
-    return_timings
-        If True, also return a ``PipelineTimings`` instance.
     preprocessing_options
         Preprocessing used both to estimate precentering shifts and, after
         centering, before common-line detection. ``None`` selects the standard
@@ -92,9 +99,20 @@ def build_relative_orientations_graph(
     -------
     numpy.ndarray
         Directed relative-orientation graph with shape
-        ``(n_images, n_images, 3, 3)``. The block ``graph[i, j]`` aligns image
-        ``j`` with the coordinate system of image ``i``. If ``return_timings``
-        is True, the graph and timing information are returned as a tuple.
+        ``(n_images, n_images, 3, 3)``.
+
+        ``graph[i, j]`` transforms vector coordinates from image ``i`` to image
+        ``j``:
+
+            v_j = graph[i, j] @ v_i
+
+        Equivalently, if ``R_i`` and ``R_j`` transform coordinates from a common
+        reference system to images ``i`` and ``j``, then ideally
+
+            graph[i, j] = R_j @ R_i.T
+
+        Pairwise estimates are computed independently, so the estimated graph is
+        not explicitly constrained to satisfy exact inverse or cycle consistency.
 
     Notes
     -----
@@ -129,7 +147,14 @@ def build_relative_orientations_graph_with_diagnostics(
     preprocessing_options: PreprocessingOptions | None = None,
 ) -> OrientationEstimationResult:
     """
-    Estimate relative orientations and return diagnostics.
+    Estimate the directed relative-orientation graph and return diagnostics.
+
+    The graph follows the same convention as
+    ``build_relative_orientations_graph``:
+
+        v_j = graph[i, j] @ v_i
+
+    for coordinates expressed in the systems of images ``i`` and ``j``.
 
     Returns
     -------
@@ -303,8 +328,9 @@ def _estimate_relative_orientation_candidates(
     Returns
     -------
     numpy.ndarray
-        Array with shape ``(n_images, n_images, 2, 3, 3)`` containing
-        the two handedness candidates for every directed image pair.
+        Array with shape ``(n_images, n_images, 2, 3, 3)``. For each ordered pair
+        ``(i, j)``, ``candidates[i, j]`` contains the two handedness candidates
+        for the coordinate transformation from image ``i`` to image ``j``.
     numpy.ndarray
         Boolean array with shape ``(n_images, n_images)`` indicating for each directed
         image pair, whether a fallback was used due to not finding a valid third
@@ -337,7 +363,7 @@ def _estimate_relative_orientation_candidates(
             k = int(k_value)
 
             try:
-                direct_r2, mirrored_r2 = get_alignment_for_second_image(
+                direct_r2, mirrored_r2 = get_transformation_for_second_image(
                     angle_12_in_1_deg=float(angle_1[i, j]),
                     angle_12_in_2_deg=float(angle_2[i, j]),
                     angle_13_in_1_deg=float(angle_1[i, k]),
@@ -348,7 +374,8 @@ def _estimate_relative_orientation_candidates(
             except ValueError:
                 continue
 
-            # The second matrix aligns image j with the frame of image i.
+            # Image i is the reference image for this triplet, so R2 transforms
+            # coordinates from image i to image j.
             branch_pairs.append((direct_r2, mirrored_r2))
             if len(branch_pairs) == n_third:
                 break
@@ -430,6 +457,9 @@ def _select_consistent_handedness(
 
         for branch_ik in range(2):
             for branch_jk in range(2):
+                # With graph[a, b] mapping a -> b, the path
+                # reference_i -> reference_j -> k is
+                # R_{j->k} @ R_{i->j}.
                 predicted = (
                     candidates[reference_j, k, branch_jk]
                     @ graph[reference_i, reference_j]
@@ -454,6 +484,8 @@ def _select_consistent_handedness(
         if i == reference_i:
             continue
 
+        # R_{i->j} = R_{ref->j} @ R_{ref->i}^{-1}.
+        # Rotation matrices are orthogonal, so the inverse is the transpose.
         predicted = graph[reference_i, j] @ graph[reference_i, i].T
 
         direct_distance = np.linalg.norm(
@@ -478,10 +510,10 @@ def _estimate_pairwise_fallback(
     Return a canonical relative orientation from one pairwise common line.
 
     A single common line does not determine the full 3D relative orientation.
-    We therefore choose the minimum-angle rotation that maps the common-line
-    direction in image 2 onto the corresponding direction in image 1. Since
-    both directions lie in their image XY planes, this is a rotation about Z
-    by ``theta_1_deg - theta_2_deg``.
+    We therefore choose the minimum-angle rotation that maps the coordinates of 
+    common-line direction in image 1 onto the corresponding coordinates in image 2.
+    Since both directions lie in their image XY planes, this is a rotation about Z
+    by ``theta_2_deg - theta_1_deg``.
 
     The mirrored handedness candidate is identical for this pure in-plane
     rotation, so the same matrix is returned for both branches.
@@ -496,11 +528,11 @@ def _estimate_pairwise_fallback(
     Returns
     -------
     numpy.ndarray
-        Canonical rotation mapping coordinates from image 2 to image 1.
+        Canonical rotation mapping coordinates from image 1 to image 2.
     numpy.ndarray
         Mirrored handedness candidate, equal to the first matrix.
     """
-    delta_rad = np.deg2rad(theta_1_deg - theta_2_deg)
+    delta_rad = np.deg2rad(theta_2_deg - theta_1_deg)
     cos_delta = np.cos(delta_rad)
     sin_delta = np.sin(delta_rad)
 

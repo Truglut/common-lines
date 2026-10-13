@@ -16,11 +16,20 @@ def compute_transformation_matrices(
     eps: float = 1.0e-6,
 ) -> HandednessPair:
     """
-    Compute both handedness solutions for the orientations of three images.
+    Recover the coordinate frames of three images from their common lines.
 
-    The returned matrices follow the passive / inverse rotation convention. Rows
-    0 and 1 contain the image axes in the reference coordinate system, while row
-    2 contains the projection direction. Image 1 is fixed to the identity.
+    Image 1 defines the reference coordinate system. For each image ``i``, the
+    returned matrix ``R_i`` transforms coordinates from this reference system
+    to the coordinate system of image ``i``:
+
+        v_i = R_i @ v_ref
+
+    Therefore, rows 0 and 1 of ``R_i`` are the image-plane basis vectors
+    expressed in reference coordinates, and row 2 is the projection direction.
+    For image 1, ``R_1`` is the identity matrix.
+
+    Two solutions are returned because common-line geometry determines the
+    orientations only up to a global handedness reflection.
 
     Parameters
     ----------
@@ -31,23 +40,21 @@ def compute_transformation_matrices(
     common_line_result_23 : CommonLineResult
         Detected oriented common line between images 2 and 3.
     theta_deg : np.ndarray
-        Angular grid used to generate the sinograms from which the common lines
-        were detected, in degrees.
+        Angular grid used to generate the sinograms, in degrees.
     eps : float, optional
         Numerical tolerance used to reject degenerate or inconsistent triplets.
 
     Returns
     -------
     tuple
-        Pair ``(direct, mirrored)``. Each element is a tuple containing the
-        transformation matrices for images 1, 2, and 3. The two solutions are
-        related by conjugation with ``HANDEDNESS_REFLECTION``.
+        Pair ``(direct, mirrored)``. Each element is ``(R_1, R_2, R_3)``,
+        with the matrices defined by ``v_i = R_i @ v_ref``. The two solutions
+        are related by conjugation with ``HANDEDNESS_REFLECTION``.
 
     Notes
     -----
-    Common-line information cannot distinguish between these two globally
-    mirrored configurations. Neither returned branch should be treated as the
-    physically correct hand without additional information.
+    Common-line information alone cannot determine which of the two handedness
+    solutions corresponds to the physical structure.
     """
     # Extract the angles of the common lines from the results
     angle_12_in_1, angle_12_in_2 = common_line_result_12.oriented_angles(
@@ -81,46 +88,53 @@ def compute_transformation_matrices_from_angles(
     eps: float = 1.0e-6,
 ) -> HandednessPair:
     """
-    Compute both handedness solutions from oriented common-line angles.
+    Recover the coordinate frames of three images from oriented common-line angles.
 
-    Angles are expressed in degrees and describe oriented image-plane directions.
-    They may therefore lie in the range [0, 360), even when the sinograms were
-    computed only for angles in [0, 180).
+    Image 1 defines the reference coordinate system. For each image ``i``, the
+    returned matrix ``R_i`` transforms vector coordinates from that reference
+    system to the coordinate system of image ``i``:
 
-    The returned transformation matrices follow the passive / inverse rotation convention,
-    where the rotation is applied to the coordinate system rather than the image itself.
-    Equivalently, the transformation matrices can be interpreted as the rotation that
-    has to be applied to the images to align them with the reference.
+        v_i = R_i @ v_ref
 
-    The computation is done following a method almost identical to the one described in
-    "Angular reconstitution: A posteriori assignment of projection directions
-    for 3D reconstruction" (1987), by Van Heel.
-    The main difference is that we fix the rotation of image 1 to the identity matrix,
-    and compute the rotations of images 2 and 3 relative to image 1.
+    Thus, if a 3D direction has coordinates ``c_ref`` in the reference system
+    and appears at angle ``theta`` in image ``i``, then
+
+        R_i @ c_ref = [cos(theta), sin(theta), 0].
+
+    Image 1 is fixed to ``R_1 = I``. The orientations of images 2 and 3 are
+    reconstructed relative to that coordinate system using angular
+    reconstitution.
+
+    All input angles are oriented common-line angles in degrees. They may lie
+    in ``[0, 360)`` even if the underlying sinograms were sampled only over
+    ``[0, 180)``.
 
     Parameters
     ----------
-    angle_12_in_1, angle_12_in_2
-        Oriented common-line angles for images 1 and 2, in degrees.
-    angle_13_in_1, angle_13_in_3
-        Oriented common-line angles for images 1 and 3, in degrees.
-    angle_23_in_2, angle_23_in_3
-        Oriented common-line angles for images 2 and 3, in degrees.
+    angle_12_in_1_deg, angle_12_in_2_deg
+        Oriented angles, in degrees, of the common line shared by images 1 and 2,
+        expressed in the coordinate systems of images 1 and 2 respectively.
+    angle_13_in_1_deg, angle_13_in_3_deg
+        Oriented angles, in degrees, of the common line shared by images 1 and 3,
+        expressed in the coordinate systems of images 1 and 3 respectively.
+    angle_23_in_2_deg, angle_23_in_3_deg
+        Oriented angles, in degrees, of the common line shared by images 2 and 3,
+        expressed in the coordinate systems of images 2 and 3 respectively.
     eps
         Numerical tolerance used to reject degenerate or inconsistent triplets.
 
     Returns
     -------
     tuple
-        Pair ``(direct, mirrored)`` containing the two globally consistent
-        handedness solutions for the triplet. Each solution contains the
-        transformation matrices for images 1, 2, and 3.
+        Pair ``(direct, mirrored)`` containing the two handedness solutions.
+        Each solution is a tuple ``(R_1, R_2, R_3)`` satisfying
+
+            v_i = R_i @ v_ref.
 
     Notes
     -----
-    Common-line information cannot distinguish between these two globally
-    mirrored configurations. Neither returned branch should be treated as the
-    physically correct hand without additional information.
+    Common-line information alone cannot determine which handedness solution
+    corresponds to the physical structure.
     """
     # Every angle from this point on should be in radians
     angle_12_in_1 = _angle_to_rad(angle_12_in_1_deg, "angle_12_in_1")
@@ -165,16 +179,24 @@ def _get_common_lines_from_angles(
     eps: float = 1.0e-6,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Gets the 3D coordinates of the common lines among three images from their measured
-    angles, in radians.
+    Recover the common-line directions in the reference coordinate system.
+
+    Image 1 defines the reference coordinate system, so its image plane is the
+    reference XY plane. The input angles are expressed in radians.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        Unit 3D directions ``(c_12, c_13, c_23)`` expressed in the coordinate
+        system of image 1.
     """
     c_12 = np.zeros(3)
     c_13 = np.zeros(3)
     c_23 = np.zeros(3)
 
     ## Compute the 3D coordinates of the common lines
-    # The common lines contained in image 1 lie in the XY plane because
-    # image 1 is fixed to the identity matrix
+    # Image 1 defines the reference coordinate system. Therefore the common
+    # lines observed in image 1 lie directly in the reference XY plane.
     c_12[0] = np.cos(angle_12_in_1_rad)
     c_12[1] = np.sin(angle_12_in_1_rad)
     c_13[0] = np.cos(angle_13_in_1_rad)
@@ -207,7 +229,7 @@ def _get_common_lines_from_angles(
     return c_12, c_13, c_23
 
 
-def get_alignment_for_second_image(
+def get_transformation_for_second_image(
     angle_12_in_1_deg: float,
     angle_12_in_2_deg: float,
     angle_13_in_1_deg: float,
@@ -217,10 +239,27 @@ def get_alignment_for_second_image(
     eps: float = 1.0e-6,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Compute both handedness solutions from oriented common-line angles only for the
-    second image ("image 2"). This is useful for cases where the geometric
-    configuration allows for calculating the alignment of image 2, but not image 3.
-    Input angles are in degrees.
+    Recover the coordinate transformation for image 2 from three common-line pairs.
+
+    Image 1 defines the reference coordinate system. The returned matrix ``R_2``
+    transforms coordinates from the system of image 1 to the system of image 2:
+
+        v_2 = R_2 @ v_1
+
+    because the coordinate system of image 1 is fixed to the identity.
+
+    Only the matrix for image 2 is computed. This allows the function to be used
+    when image 2 can be reconstructed from a triplet even if the full orientation
+    of image 3 is not recoverable.
+
+    All input common-line angles are oriented (i.e., in the [0, 360) interval) angles
+    in degrees.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        ``(direct_R2, mirrored_R2)``, the two handedness candidates for the
+        transformation from image 1 coordinates to image 2 coordinates.
     """
     # Every angle from this point on should be in radians
     angle_12_in_1 = _angle_to_rad(angle_12_in_1_deg, "angle_12_in_1")
@@ -263,7 +302,14 @@ def mirror_transformation_matrices(
     rotations: Iterable[np.ndarray],
 ) -> tuple[np.ndarray, ...]:
     """
-    Return the opposite-handed version of a triplet of transformation matrices.
+    Return the opposite-handed coordinate-frame solution.
+
+    Each input matrix ``R_i`` is assumed to transform coordinates from a common
+    reference system to image ``i``. The opposite-handed solution is obtained as
+
+        J @ R_i @ J
+
+    with ``J = diag(1, 1, -1)``.
 
     Parameters
     ----------
@@ -289,9 +335,20 @@ def _compute_matrix_from_common_lines(
     eps: float,
 ) -> np.ndarray:
     """
-    Computes the transformation matrix corresponding to an image from the common lines
-    it shares with two other images, using the precomputed 3D coordinates of these
-    given common lines.
+    Construct the coordinate transformation for one image from two common lines.
+
+    The vectors ``c_a`` and ``c_b`` are the coordinates of two 3D common-line
+    directions in the reference coordinate system. ``theta_a_rad`` and
+    ``theta_b_rad`` are the angles of those same directions in the image
+    coordinate system.
+
+    The returned matrix ``R`` satisfies
+
+        R @ c_a = [cos(theta_a_rad), sin(theta_a_rad), 0]
+        R @ c_b = [cos(theta_b_rad), sin(theta_b_rad), 0]
+
+    and therefore transforms coordinates from the reference system to the image
+    coordinate system.
 
     Parameters
     ----------
@@ -309,8 +366,8 @@ def _compute_matrix_from_common_lines(
     Returns
     -------
     np.ndarray
-        3x3 corresponding to the rotation matrix that aligns the image to the reference
-        (the reference is implicit in the 3D coordinates of the common lines).
+        Proper 3D rotation matrix transforming reference coordinates into the
+        coordinate system of the image.
     """
     # Read angle of both common lines with image axes and compute difference
     sin_diff = np.sin(theta_b_rad - theta_a_rad)
@@ -323,8 +380,12 @@ def _compute_matrix_from_common_lines(
 
     # The first two rows of the rotation matrix are obtained by solving a linear system
     # given by the coordinates of the two common lines
-    rotation_matrix[0, :] = (np.sin(theta_b_rad) * c_a - np.sin(theta_a_rad) * c_b) / sin_diff
-    rotation_matrix[1, :] = (np.cos(theta_a_rad) * c_b - np.cos(theta_b_rad) * c_a) / sin_diff
+    rotation_matrix[0, :] = (
+        np.sin(theta_b_rad) * c_a - np.sin(theta_a_rad) * c_b
+    ) / sin_diff
+    rotation_matrix[1, :] = (
+        np.cos(theta_a_rad) * c_b - np.cos(theta_b_rad) * c_a
+    ) / sin_diff
 
     # The last row is the projection direction: orthogonal to both common lines, and
     # unitary
