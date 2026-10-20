@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from skimage.transform import radon
 
-from common_lines.radon import batch_radon
+from common_lines.radon import _batch_radon
 
 
 def skimage_radon_loop(images, theta, *, circle=True):
@@ -50,7 +50,7 @@ def test_batch_radon_matches_skimage(circle, shape):
     theta = np.linspace(0, 180, 37, endpoint=False)
 
     expected = skimage_radon_loop(images, theta, circle=circle)
-    actual = batch_radon(images, theta=theta, circle=circle)
+    actual = _batch_radon(images, theta=theta, circle=circle)
 
     assert actual.shape == expected.shape
     np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
@@ -70,7 +70,7 @@ def test_single_image_matches_skimage_shape_and_values():
             circle=True,
             preserve_range=True,
         )
-    actual = batch_radon(image, theta=theta, circle=True)
+    actual = _batch_radon(image, theta=theta, circle=True)
 
     assert actual.shape == expected.shape
     np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
@@ -88,7 +88,7 @@ def test_timing_against_skimage():
     theta = np.linspace(0, 180, n_angles, endpoint=False)
 
     # Warm-up: first numba call includes compilation, so do not time it.
-    _ = batch_radon(images[:2], theta=theta[:5], circle=True)
+    _ = _batch_radon(images[:2], theta=theta[:5], circle=True)
 
     t_skimage, expected = best_time(
         skimage_radon_loop,
@@ -99,7 +99,7 @@ def test_timing_against_skimage():
     )
 
     t_batch, actual = best_time(
-        batch_radon,
+        _batch_radon,
         images,
         theta,
         circle=True,

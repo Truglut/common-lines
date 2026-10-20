@@ -6,7 +6,7 @@ import numpy as np
 from numba import njit, prange
 
 
-def batch_radon(
+def _batch_radon(
     images: np.ndarray,
     theta: np.ndarray | None = None,
     *,
@@ -233,7 +233,7 @@ def batch_common_line_sinograms(
     else:
         theta = np.asarray(theta, dtype=np.float64)
 
-    return batch_radon(
+    return _batch_radon(
         images,
         theta=-theta,
         circle=circle,
