@@ -1,10 +1,13 @@
-"""Compare common lines detected from images against known orientations.
+"""
+Compare common lines detected from images against known orientations.
 
 Example:
     python detection_errors.py particles.npz --n-images 24
     python detection_errors.py particles.star --n-images 24 --symmetry D7
     python detection_errors.py particles.star --image-stack images.mrcs --symmetry C5
     python detection_errors.py particles.npz --symmetry D7 --uniform-baseline --permutation-test
+    python -m scripts.detection_errors particles.npz --precenter center_of_mass --preprocessing default
+    python -m scripts.detection_errors particles.npz --preprocessing default --no-mask --clip-negative
 
 Optional baselines use 200 Monte Carlo trials (BASELINE_TRIALS below) and the
 existing symmetry-aware pair-error definition. --seed makes runs reproducible.
@@ -24,6 +27,21 @@ import numpy as np
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.radon import batch_common_line_sinograms
 from common_lines.forward import compute_intrinsic_common_line_angles
+
+if __package__:
+    from ._benchmark_preprocessing import (
+        add_preprocessing_arguments,
+        configuration_description,
+        prepare_images,
+        resolve_preprocessing_options,
+    )
+else:
+    from _benchmark_preprocessing import (
+        add_preprocessing_arguments,
+        configuration_description,
+        prepare_images,
+        resolve_preprocessing_options,
+    )
 
 
 # Increase this constant if tighter Monte Carlo estimates are needed.
@@ -102,6 +120,7 @@ def euler_zyz_to_matrix(
 
     return out
 
+
 def star_angles_to_matrices(particles):
     """Return (N, 3, 3) matrices with v_image = R @ v_reference.
 
@@ -125,8 +144,16 @@ def read_metadata(path):
     if path.suffix.lower() == ".npz":
         with np.load(path, allow_pickle=False) as data:
             matrices = np.asarray(data["matrices"])
-            names = np.asarray(data["image_names"]).astype(str) if "image_names" in data else None
-            images = np.asarray(data["original_images"]) if "original_images" in data else None
+            names = (
+                np.asarray(data["image_names"]).astype(str)
+                if "image_names" in data
+                else None
+            )
+            images = (
+                np.asarray(data["original_images"])
+                if "original_images" in data
+                else None
+            )
         return matrices, names, images
 
     if path.suffix.lower() == ".star":
@@ -160,11 +187,12 @@ def read_images(metadata_path, indices, image_names, embedded_images, image_stac
         stack_path = Path(path_text)
         if not stack_path.is_absolute():
             relative_to_metadata = metadata_path.parent / stack_path
-            stack_path = relative_to_metadata if relative_to_metadata.exists() else stack_path
+            stack_path = (
+                relative_to_metadata if relative_to_metadata.exists() else stack_path
+            )
         with mrcfile.open(stack_path, permissive=True) as mrc:
             images.append(np.array(mrc.data[int(index_text) - 1], dtype=np.float32))
     return np.stack(images)
-
 
 
 def symmetry_operators(symmetry):
@@ -193,7 +221,6 @@ def symmetry_operators(symmetry):
 
     twofold_x = np.diag([1.0, -1.0, -1.0])
     return np.concatenate((cyclic, cyclic @ twofold_x), axis=0)
-
 
 
 def wrap_degrees(angle):
@@ -328,8 +355,12 @@ def run_permutation_baseline(matrices, i, j, measured, symmetry_ops, rng):
             histogram += np.histogram(per_pair, HIST_BINS)[0] / len(per_pair)
 
     n_nonempty = np.count_nonzero(valid_counts)
-    return {"metrics": metrics, "histogram": histogram / n_nonempty if n_nonempty else histogram,
-            "valid_counts": valid_counts, "total_pairs": len(i)}
+    return {
+        "metrics": metrics,
+        "histogram": histogram / n_nonempty if n_nonempty else histogram,
+        "valid_counts": valid_counts,
+        "total_pairs": len(i),
+    }
 
 
 def _ranks(values):
@@ -371,22 +402,30 @@ def _print_baseline(name, baseline, observed, *, permutation=False):
     trial_metrics = trial_metrics[good]
     means = trial_metrics.mean(axis=0)
     print(f"\n{name} ({len(trial_metrics)} trials):")
-    print(f"  Mean absolute angle error: {means[0]:.2f} deg "
-          f"(trial SD {trial_metrics[:, 0].std():.2f} deg)")
+    print(
+        f"  Mean absolute angle error: {means[0]:.2f} deg "
+        f"(trial SD {trial_metrics[:, 0].std():.2f} deg)"
+    )
     print(f"  Median pair error:         {means[1]:.2f} deg")
     print(f"  Pairs within 10 deg:       {100 * means[2]:.1f}%")
 
     if permutation:
         # Inclusive, finite-sample Monte Carlo p-values (smaller mean is better;
         # larger within-10 fraction is better).
-        p_mean = (1 + np.sum(trial_metrics[:, 0] <= observed[0])) / (1 + len(trial_metrics))
-        p_within = (1 + np.sum(trial_metrics[:, 2] >= observed[2])) / (1 + len(trial_metrics))
+        p_mean = (1 + np.sum(trial_metrics[:, 0] <= observed[0])) / (
+            1 + len(trial_metrics)
+        )
+        p_within = (1 + np.sum(trial_metrics[:, 2] >= observed[2])) / (
+            1 + len(trial_metrics)
+        )
         print(f"  Permutation p (mean error):     {p_mean:.4f}")
         print(f"  Permutation p (within 10 deg):  {p_within:.4f}")
         counts = baseline["valid_counts"]
         if np.any(counts < baseline["total_pairs"]):
-            print(f"  Valid pairs per trial: {counts.min()}–{counts.max()} "
-                  "(some reassigned pairs are degenerate)")
+            print(
+                f"  Valid pairs per trial: {counts.min()}–{counts.max()} "
+                "(some reassigned pairs are degenerate)"
+            )
     else:
         normalized = 1 - observed[0] / means[0] if means[0] > 0 else np.nan
         adjusted = (observed[2] - means[2]) / (1 - means[2]) if means[2] < 1 else np.nan
@@ -394,38 +433,82 @@ def _print_baseline(name, baseline, observed, *, permutation=False):
         print(f"  Chance-adjusted within 10 deg:  {adjusted:.3f}")
 
 
-def save_results(prefix, original_indices, i, j, truth, measured, errors,
-                 correlation, selected_ops, symmetry, uniform=None, permutation=None):
+def save_results(
+    prefix,
+    original_indices,
+    i,
+    j,
+    truth,
+    measured,
+    errors,
+    correlation,
+    selected_ops,
+    symmetry,
+    uniform=None,
+    permutation=None,
+):
     per_pair = pair_errors(errors)
     observed = summary_metrics(errors)
-    rows = np.column_stack((
-        original_indices[i] + 1, original_indices[j] + 1,
-        truth, measured, errors, per_pair, correlation, selected_ops,
-    ))
+    rows = np.column_stack(
+        (
+            original_indices[i] + 1,
+            original_indices[j] + 1,
+            truth,
+            measured,
+            errors,
+            per_pair,
+            correlation,
+            selected_ops,
+        )
+    )
     columns = (
         "particle_i,particle_j,truth_i_deg,truth_j_deg,"
         "detected_i_deg,detected_j_deg,error_i_deg,error_j_deg,"
         "pair_mean_abs_error_deg,correlation,symmetry_operator_index"
     )
-    np.savetxt(prefix.with_suffix(".csv"), rows, delimiter=",", header=columns,
-               comments="", fmt=["%d", "%d"] + ["%.5f"] * 8 + ["%d"])
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    np.savetxt(
+        prefix.with_suffix(".csv"),
+        rows,
+        delimiter=",",
+        header=columns,
+        comments="",
+        fmt=["%d", "%d"] + ["%.5f"] * 8 + ["%d"],
+    )
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     fig.suptitle(f"Common-line validation ({symmetry.upper()})")
-    axes[0].hist(per_pair, bins=HIST_BINS,
-                 weights=np.full(len(per_pair), 1 / len(per_pair)),
-                 alpha=0.55, label="Detected")
+    axes[0].hist(
+        per_pair,
+        bins=HIST_BINS,
+        weights=np.full(len(per_pair), 1 / len(per_pair)),
+        alpha=0.55,
+        label="Detected",
+    )
     if uniform is not None:
-        axes[0].stairs(uniform["histogram"], HIST_BINS, label="Uniform random", linewidth=1.8)
+        axes[0].stairs(
+            uniform["histogram"], HIST_BINS, label="Uniform random", linewidth=1.8
+        )
     if permutation is not None:
-        axes[0].stairs(permutation["histogram"], HIST_BINS, label="Permuted orientations", linewidth=1.8)
+        axes[0].stairs(
+            permutation["histogram"],
+            HIST_BINS,
+            label="Permuted orientations",
+            linewidth=1.8,
+        )
     if uniform is not None or permutation is not None:
         axes[0].legend()
-    axes[0].set(xlabel="Mean absolute angle error per pair (deg)",
-                ylabel="Fraction of pairs per bin", title="Angular-error distribution")
+    axes[0].set(
+        xlabel="Mean absolute angle error per pair (deg)",
+        ylabel="Fraction of pairs per bin",
+        title="Angular-error distribution",
+    )
     axes[1].scatter(correlation, per_pair, s=12, alpha=0.6)
-    axes[1].set(xlabel="Detected correlation", ylabel="Mean absolute error (deg)",
-                title="Error versus match correlation")
+    axes[1].set(
+        xlabel="Detected correlation",
+        ylabel="Mean absolute error (deg)",
+        title="Error versus match correlation",
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(prefix.with_suffix(".png"), dpi=160)
     plt.close(fig)
@@ -434,11 +517,17 @@ def save_results(prefix, original_indices, i, j, truth, measured, errors,
         # A histogram of *trial mean errors* is distinct from the pair-error
         # histogram: it visualizes the null distribution of the overall score.
         fig, ax = plt.subplots(figsize=(6, 4))
-        ax.hist(permutation["metrics"][:, 0][np.isfinite(permutation["metrics"][:, 0])],
-                bins=25, label="Permutations")
+        ax.hist(
+            permutation["metrics"][:, 0][np.isfinite(permutation["metrics"][:, 0])],
+            bins=25,
+            label="Permutations",
+        )
         ax.axvline(observed[0], color="tab:red", linewidth=2, label="Detected")
-        ax.set(xlabel="Mean absolute angle error (deg)",
-               ylabel="Number of permutations", title="Permutation-test null distribution")
+        ax.set(
+            xlabel="Mean absolute angle error (deg)",
+            ylabel="Number of permutations",
+            title="Permutation-test null distribution",
+        )
         ax.legend()
         fig.tight_layout()
         fig.savefig(prefix.with_name(prefix.name + "_permutation.png"), dpi=160)
@@ -450,18 +539,23 @@ def save_results(prefix, original_indices, i, j, truth, measured, errors,
     print(f"Median pair error:         {observed[1]:.2f} deg")
     print(f"Pairs within 10 deg:       {100 * observed[2]:.1f}%")
 
-    pearson, spearman, low_rate, high_rate = correlation_diagnostics(correlation, per_pair)
+    pearson, spearman, low_rate, high_rate = correlation_diagnostics(
+        correlation, per_pair
+    )
     print("\nDetection correlation vs pair error (negative is better):")
     print(f"  Pearson r:               {pearson:.3f}")
     print(f"  Spearman rho:            {spearman:.3f}")
-    print(f"  Within 10 deg, lowest/highest correlation quartiles: "
-          f"{100 * low_rate:.1f}% / {100 * high_rate:.1f}%")
+    print(
+        f"  Within 10 deg, lowest/highest correlation quartiles: "
+        f"{100 * low_rate:.1f}% / {100 * high_rate:.1f}%"
+    )
 
     if uniform is not None:
         _print_baseline("Uniform-angle baseline", uniform, observed)
     if permutation is not None:
-        _print_baseline("Orientation-permutation baseline", permutation, observed,
-                        permutation=True)
+        _print_baseline(
+            "Orientation-permutation baseline", permutation, observed, permutation=True
+        )
 
     print(f"\nSaved: {prefix.with_suffix('.csv')} and {prefix.with_suffix('.png')}")
     if permutation is not None:
@@ -471,16 +565,39 @@ def save_results(prefix, original_indices, i, j, truth, measured, errors,
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("metadata", type=Path, help="STAR or NPZ orientation metadata")
-    parser.add_argument("--image-stack", type=Path, help="Optional MRC/MRCS stack in metadata order")
-    parser.add_argument("--n-images", type=int, default=24, help="Randomly sample this many images (default 24)")
-    parser.add_argument("--angle-step", type=float, default=2.0, help="Sinogram angle spacing in degrees")
-    parser.add_argument("--symmetry", default="C1", help="RELION symmetry Cn or Dn, e.g. C1, C7, D7 (default C1)")
+    parser.add_argument(
+        "--image-stack", type=Path, help="Optional MRC/MRCS stack in metadata order"
+    )
+    parser.add_argument(
+        "--n-images",
+        type=int,
+        default=24,
+        help="Randomly sample this many images (default 24)",
+    )
+    parser.add_argument(
+        "--angle-step",
+        type=float,
+        default=2.0,
+        help="Sinogram angle spacing in degrees",
+    )
+    parser.add_argument(
+        "--symmetry",
+        default="C1",
+        help="RELION symmetry Cn or Dn, e.g. C1, C7, D7 (default C1)",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", type=Path, default=Path("common_line_validation"))
-    parser.add_argument("--uniform-baseline", action="store_true",
-                        help="Compare with random uniform detected angles and report chance-adjusted scores")
-    parser.add_argument("--permutation-test", action="store_true",
-                        help="Shuffle image-to-orientation assignments, report p-values and plot the null distribution")
+    add_preprocessing_arguments(parser, pipeline_defaults=False)
+    parser.add_argument(
+        "--uniform-baseline",
+        action="store_true",
+        help="Compare with random uniform detected angles and report chance-adjusted scores",
+    )
+    parser.add_argument(
+        "--permutation-test",
+        action="store_true",
+        help="Shuffle image-to-orientation assignments, report p-values and plot the null distribution",
+    )
     args = parser.parse_args()
     operators = symmetry_operators(args.symmetry)
 
@@ -491,11 +608,17 @@ def main():
         raise ValueError("--n-images must be >= 2 and --angle-step must be positive")
 
     rng = np.random.default_rng(args.seed)
-    indices = np.sort(rng.choice(len(matrices), size=min(len(matrices), args.n_images), replace=False))
+    indices = np.sort(
+        rng.choice(len(matrices), size=min(len(matrices), args.n_images), replace=False)
+    )
     images = read_images(args.metadata, indices, names, embedded, args.image_stack)
     matrices = matrices[indices]
 
-    # Optional project-specific image centering/masking/preprocessing goes here.
+    options = resolve_preprocessing_options(images, args)
+    images = prepare_images(
+        images, precenter=args.precenter, preprocessing_options=options
+    )
+    print(f"Image preparation: {configuration_description(args)}")
     theta = np.arange(0.0, 180.0, args.angle_step)
     i, j, truth, measured, errors, correlation, selected_ops = validate(
         matrices, images, theta, operators
@@ -503,13 +626,30 @@ def main():
     uniform = None
     if args.uniform_baseline:
         candidate_truth, valid = candidate_common_line_angles(matrices, i, j, operators)
-        uniform = run_uniform_baseline(candidate_truth, valid, theta,
-                                       np.random.default_rng(args.seed + 1))
-    permutation = (run_permutation_baseline(matrices, i, j, measured, operators,
-                                          np.random.default_rng(args.seed + 2))
-                   if args.permutation_test else None)
-    save_results(args.output, indices, i, j, truth, measured, errors,
-                 correlation, selected_ops, args.symmetry, uniform, permutation)
+        uniform = run_uniform_baseline(
+            candidate_truth, valid, theta, np.random.default_rng(args.seed + 1)
+        )
+    permutation = (
+        run_permutation_baseline(
+            matrices, i, j, measured, operators, np.random.default_rng(args.seed + 2)
+        )
+        if args.permutation_test
+        else None
+    )
+    save_results(
+        args.output,
+        indices,
+        i,
+        j,
+        truth,
+        measured,
+        errors,
+        correlation,
+        selected_ops,
+        args.symmetry,
+        uniform,
+        permutation,
+    )
 
 
 if __name__ == "__main__":
