@@ -1,11 +1,11 @@
 """Estimate relative orientations from common lines in cryo-EM images."""
 
 from .centering.preprocessing import PreprocessingOptions
-from .main import (
+from .graph_estimation import mirror_relative_orientations_graph
+from .pipeline import (
     OrientationEstimationResult,
     build_relative_orientations_graph,
     build_relative_orientations_graph_with_diagnostics,
-    mirror_relative_orientations_graph,
 )
 
 __all__ = [
