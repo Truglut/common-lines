@@ -3,7 +3,7 @@ import itertools
 
 import numpy as np
 
-from common_lines.centering import precenter_images, PrecenteringMethod
+from common_lines.centering import estimate_shifts, PrecenteringMethod, shift_images
 from common_lines.preprocessing import PreprocessingOptions, preprocess_images
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.graph_estimation import (
@@ -176,11 +176,11 @@ def build_relative_orientations_graph_with_diagnostics(
     )
 
     if precenter_method is not None:
-        images = precenter_images(
-            images,
-            method=precenter_method,
-            preprocessing_options=preprocessing_options,
-        )
+        images_for_centering = preprocess_images(images, options=preprocessing_options)
+        shifts = estimate_shifts(images_for_centering, method=precenter_method)
+        del images_for_centering
+
+        images = shift_images(images, shifts)
 
     images_for_detection = preprocess_images(images, options=preprocessing_options)
     sinograms = batch_common_line_sinograms(images_for_detection, theta=theta_array)

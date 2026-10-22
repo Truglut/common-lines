@@ -91,17 +91,30 @@ def test_estimate_center_of_mass_shifts_matches_scalar():
     )
 
 
-def test_default_center_of_mass_preprocessing_removes_constant_background():
+def test_centering_uses_supplied_images():
+    from common_lines.preprocessing import (
+        PreprocessingOptions,
+        preprocess_images,
+    )
+
     images = np.full((1, 9, 9), 5.0, dtype=np.float64)
     images[0, 2, 4] += 10.0
 
-    # The default circular mask has radius 9 / 2 pixels. Its complement contains
-    # only the constant background, so background subtraction leaves one positive
-    # mass at (2, 4). The target center is (4, 4).
-    shifts = estimate_shifts(images)
+    # Background contributes to the center of mass when supplied unchanged.
+    # Total mass is 81 * 5 + 10 = 415.
+    np.testing.assert_allclose(
+        estimate_shifts(images)[0],
+        (20.0 / 415.0, 0.0),
+        atol=1.0e-12,
+        rtol=0.0,
+    )
+
+    # Explicit preprocessing removes the background, leaving one mass at (2, 4).
+    options = PreprocessingOptions.default_from_images(images)
+    processed = preprocess_images(images, options=options)
 
     np.testing.assert_allclose(
-        shifts[0],
+        estimate_shifts(processed)[0],
         (2.0, 0.0),
         atol=1.0e-12,
         rtol=0.0,

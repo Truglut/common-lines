@@ -92,19 +92,11 @@ The two solutions differ only by the global handedness ambiguity inherent to com
 
 Common-line geometry assumes that the particle is centered consistently across images, which is not always true for experimental data.
 
-Rather than including many possible translations in the common-line search, this implementation first estimates a single shift for each image. Currently, two different options to estimate these shifts are implemented: center-of-mass and reflection centering. These can be chosen by passing either ``precenter_method="center_of_mass"`` or ``precenter_method="reflection"`` to ``build_relative_orientations_graph``.
+When precentering is enabled, this implementation estimates a single shift for each image rather than including many possible translations in the common-line search. Two methods are available: center-of-mass and reflection centering. These can be selected by passing either `precenter_method="center_of_mass"` or `precenter_method="reflection"` to `build_relative_orientations_graph`.
 
-Center-of-mass centering is the default.
-The motivation is that, under the ideal projection model, the center of mass of a projection should coincide with the projected center of the particle.
-The estimated shifts are applied to the original images.
+Center-of-mass centering is motivated by the fact that, under the ideal projection model, the center of mass of a projection coincides with the projection of the volume's center of mass. The estimated shifts from either method are applied to the original images.
 
-Precentering can be disabled with:
-
-```python
-precenter_method=None
-```
-
-The effectiveness of the available precentering methods has not yet been evaluated extensively on experimental data, so center-of-mass precentering should be regarded as a practical default rather than a fully validated solution.
+However, neither method has improved results in our experimental-data tests so far, and in some cases precentering appears to reduce accuracy. Precentering is therefore disabled by default (`precenter_method=None`).
 
 ## Preprocessing
 
@@ -118,14 +110,14 @@ In particular, the preprocessing aims to produce images in which:
 
 These conditions are especially important for center-of-mass precentering, since background offsets or unrelated positive signal can bias the estimated center.
 
-By default, the code applies a centered circular mask, estimates the background outside the mask, and subtracts it. Negative values are not clipped by default.
+Preprocessing is disabled by default (`preprocessing_options=None`). It can be enabled explicitly by passing a `PreprocessingOptions` instance to `build_relative_orientations_graph`. An instance created with `PreprocessingOptions()` also leaves the images unchanged.
 
-The same preprocessing configuration is used twice:
+When precentering is enabled, the pipeline uses the same preprocessing configuration at two stages:
 
-1. before estimating the precentering shifts;
-2. after shifting the original images, before common-line detection.
+1. It preprocesses copies of the input images to estimate the centering shifts.
+2. It applies those shifts to the original images, then preprocesses the shifted images before common-line detection.
 
-The shifts are therefore applied to the original images, not to already masked or otherwise preprocessed copies.
+When precentering is disabled, preprocessing is applied only once, before common-line detection. Setting `preprocessing_options=None` disables preprocessing at both stages without disabling precentering.
 
 Preprocessing can be customized with `PreprocessingOptions`:
 
@@ -137,20 +129,26 @@ from common_lines import (
 
 graph = build_relative_orientations_graph(
     images,
-    preprocessing_options=PreprocessingOptions(...),
+    preprocessing_options=PreprocessingOptions(
+        clip_negative=True,
+    ),
 )
 ```
 
-The current preprocessing choices have not yet been evaluated extensively on experimental data. If a dataset already has a suitable external preprocessing pipeline, it may be preferable to use that and disable the built-in preprocessing:
+A preprocessing pipeline that uses an inscribed circular mask, estimates the background from the region outside that mask, subtracts that background, and leaves negative values unchanged can be obtained with
+
+```python
+preprocessing_options = PreprocessingOptions.default_from_images(images)
+```
+
+The current preprocessing choices have not yet been evaluated extensively on experimental data, and have not shown improved performance on the tests that have been run. If a dataset already has a suitable external preprocessing pipeline, it may be preferable to use that and disable the built-in preprocessing:
 
 ```python
 graph = build_relative_orientations_graph(
     externally_preprocessed_images,
-    preprocessing_options=PreprocessingOptions(),
+    preprocessing_options=None,
 )
 ```
-
-`PreprocessingOptions()` disables the built-in masking, background subtraction, and negative clipping.
 
 ## Diagnostics and fallback estimates
 
