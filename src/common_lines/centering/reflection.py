@@ -4,7 +4,7 @@ import numpy as np
 
 from common_lines.centering._validation import _as_image_batch, _as_single_image
 from common_lines.centering.shifts import shift_image
-from .preprocessing import preprocess_images, PreprocessingOptions
+from ..preprocessing import preprocess_images, PreprocessingOptions
 
 
 def estimate_reflection_shift(

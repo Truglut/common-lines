@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
-
-from common_lines.centering.preprocessing import default_preprocessing_options
 
 from .center_of_mass import estimate_center_of_mass_shifts
 from .reflection import estimate_reflection_shifts
 from .shifts import shift_images
-from .preprocessing import PreprocessingOptions
+
+if TYPE_CHECKING:
+    from common_lines.preprocessing import PreprocessingOptions
 
 PrecenteringMethod = Literal["reflection", "center_of_mass"]
 
@@ -42,9 +42,6 @@ def estimate_shifts(
         Preprocessing used only for estimating the shifts. The resulting
         shifts are applied to the original input images.
     """
-    if preprocessing_options is None:
-        preprocessing_options = default_preprocessing_options(images)
-
     if method == "reflection":
         return estimate_reflection_shifts(
             images,

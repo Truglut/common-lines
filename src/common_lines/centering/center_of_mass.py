@@ -3,7 +3,7 @@ import numpy as np
 from ._validation import _as_single_image, _as_image_batch
 
 from .shifts import shift_image
-from .preprocessing import preprocess_images, PreprocessingOptions
+from ..preprocessing import preprocess_images, PreprocessingOptions
 
 
 def compute_center_of_mass(

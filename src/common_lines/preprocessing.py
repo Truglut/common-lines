@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,25 +41,24 @@ class PreprocessingOptions:
     background_mask: np.ndarray | None = None
     clip_negative: bool = False
 
-
-def default_preprocessing_options(images: np.ndarray) -> PreprocessingOptions:
-    """
-    Build the standard preprocessing used by the orientation pipeline.
-
-    The default uses an inscribed circular mask, estimates the background from
-    the region outside that mask, subtracts that background, and leaves negative
-    values unchanged.
-    """
-    image_shape = np.asarray(images).shape[-2:]
-    radius = min(image_shape) / 2.0
-    mask = create_circular_mask(image_shape, radius=radius)
-
-    return PreprocessingOptions(
-        mask=mask,
-        subtract_background=True,
-        clip_negative=False,
-    )
-
+    @classmethod
+    def default_from_images(cls, images: np.ndarray) -> PreprocessingOptions:
+        """
+        Build a sensible preprocessing default for the given images.
+        
+        The default uses an inscribed circular mask, estimates the background from
+        the region outside that mask, subtracts that background, and leaves negative
+        values unchanged.
+        """
+        image_shape = np.asarray(images).shape[-2:]
+        radius = min(image_shape) / 2.0
+        mask = create_circular_mask(image_shape, radius=radius)
+        
+        return cls(
+            mask=mask,
+            subtract_background=True,
+            clip_negative=False,
+        )
 
 def preprocess_images(
     images: np.ndarray, options: PreprocessingOptions | None = None
