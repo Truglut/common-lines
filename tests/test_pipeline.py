@@ -1,6 +1,7 @@
 import numpy as np
 
-import common_lines.main as main
+import common_lines.graph_estimation
+import common_lines.pipeline as pipeline
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -18,7 +19,9 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
     theta_1_deg = 25.0
     theta_2_deg = 100.0
 
-    direct, mirrored = main._estimate_pairwise_fallback(theta_1_deg, theta_2_deg)
+    direct, mirrored = common_lines.graph_estimation._estimate_pairwise_fallback(
+        theta_1_deg, theta_2_deg
+    )
 
     _assert_rotation_matrix(direct)
     assert np.allclose(mirrored, direct)
@@ -61,12 +64,12 @@ def _patch_pipeline_to_force_fallback(monkeypatch):
             return angle_1, angle_2
 
     monkeypatch.setattr(
-        main,
+        pipeline,
         "batch_common_line_sinograms",
         lambda images, theta: np.empty((images.shape[0], len(theta), images.shape[-1])),
     )
     monkeypatch.setattr(
-        main,
+        pipeline,
         "detect_common_lines_all_pairs",
         lambda sinograms, allow_reversed, block_size: FakeCommonLines(),
     )
@@ -75,7 +78,7 @@ def _patch_pipeline_to_force_fallback(monkeypatch):
         raise ValueError("No valid triplet geometry")
 
     monkeypatch.setattr(
-        main, "get_transformation_for_second_image", fail_triplet_estimation
+        common_lines.graph_estimation, "get_transformation_for_second_image", fail_triplet_estimation
     )
     return angle_1, angle_2
 
@@ -84,7 +87,7 @@ def test_pipeline_diagnostics_report_fallback_edges(monkeypatch):
     angle_1, angle_2 = _patch_pipeline_to_force_fallback(monkeypatch)
 
     images = np.zeros((3, 5, 5), dtype=np.float64)
-    result = main.build_relative_orientations_graph_with_diagnostics(
+    result = pipeline.build_relative_orientations_graph_with_diagnostics(
         images,
         theta=np.array([0.0, 90.0]),
         n_third=1,
@@ -114,19 +117,19 @@ def test_pipeline_diagnostics_report_fallback_edges(monkeypatch):
 
 def test_simple_api_returns_only_graph(monkeypatch):
     expected_graph = np.broadcast_to(np.eye(3), (3, 3, 3, 3)).copy()
-    detailed = main.OrientationEstimationResult(
+    detailed = pipeline.OrientationEstimationResult(
         graph=expected_graph,
         used_fallback=np.zeros((3, 3), dtype=bool),
         handedness_reference=(0, 1),
     )
 
     monkeypatch.setattr(
-        main,
+        pipeline,
         "build_relative_orientations_graph_with_diagnostics",
         lambda *args, **kwargs: detailed,
     )
 
-    graph = main.build_relative_orientations_graph(np.zeros((3, 5, 5)))
+    graph = pipeline.build_relative_orientations_graph(np.zeros((3, 5, 5)))
 
     assert isinstance(graph, np.ndarray)
     assert graph is expected_graph
@@ -141,7 +144,7 @@ def test_automatic_handedness_reference_avoids_fallback_edge():
         ]
     )
 
-    reference = main._resolve_handedness_reference(used_fallback, requested=None)
+    reference = pipeline._resolve_handedness_reference(used_fallback, requested=None)
 
     assert reference == (0, 2)
     assert not used_fallback[reference]
@@ -188,16 +191,18 @@ def test_orientation_graph_uses_i_to_j_coordinate_convention():
         ]
     )
 
-    candidates, used_fallback = main._estimate_relative_orientation_candidates(
-        angle_1,
-        angle_2,
-        n_third=1,
-        random_seed=0,
+    candidates, used_fallback = (
+        common_lines.graph_estimation.estimate_relative_orientation_candidates(
+            angle_1,
+            angle_2,
+            n_third=1,
+            random_seed=0,
+        )
     )
 
     assert not np.any(used_fallback)
 
-    graph = main._select_consistent_handedness(
+    graph = common_lines.graph_estimation.select_consistent_handedness(
         candidates,
         reference_pair=(0, 1),
     )
@@ -227,42 +232,41 @@ def test_fallback_and_reconstitution_edges_share_i_to_j_convention(monkeypatch):
         ]
     )
 
-    real_solver = main.get_transformation_for_second_image
+    real_solver = common_lines.graph_estimation.get_transformation_for_second_image
 
     def solver_with_one_forced_failure(**kwargs):
         # Force only the directed edge 0 -> 1 to use the pairwise fallback.
-        if (
-            kwargs["angle_12_in_1_deg"] == 20.0
-            and kwargs["angle_12_in_2_deg"] == 70.0
-        ):
+        if kwargs["angle_12_in_1_deg"] == 20.0 and kwargs["angle_12_in_2_deg"] == 70.0:
             raise ValueError("Force fallback for edge 0 -> 1")
 
         return real_solver(**kwargs)
 
     monkeypatch.setattr(
-        main,
+        common_lines.graph_estimation,
         "get_transformation_for_second_image",
         solver_with_one_forced_failure,
     )
 
-    candidates, used_fallback = main._estimate_relative_orientation_candidates(
-        angle_1,
-        angle_2,
-        n_third=1,
-        random_seed=0,
+    candidates, used_fallback = (
+        common_lines.graph_estimation.estimate_relative_orientation_candidates(
+            angle_1,
+            angle_2,
+            n_third=1,
+            random_seed=0,
+        )
     )
 
     expected_fallback = np.zeros((3, 3), dtype=bool)
     expected_fallback[0, 1] = True
     assert np.array_equal(used_fallback, expected_fallback)
 
-    reference_pair = main._resolve_handedness_reference(
+    reference_pair = pipeline._resolve_handedness_reference(
         used_fallback,
         requested=None,
     )
     assert not used_fallback[reference_pair]
 
-    graph = main._select_consistent_handedness(
+    graph = common_lines.graph_estimation.select_consistent_handedness(
         candidates,
         reference_pair=reference_pair,
     )
@@ -289,7 +293,7 @@ def test_pipeline_resolves_default_preprocessing_once_and_reuses_it(monkeypatch)
     centered_images = np.full_like(images, 2.0)
     detection_images = np.full_like(images, 3.0)
 
-    resolved_options = main.PreprocessingOptions(
+    resolved_options = pipeline.PreprocessingOptions(
         mask=np.ones((5, 5), dtype=np.float64),
         subtract_background=False,
         clip_negative=True,
@@ -352,25 +356,25 @@ def test_pipeline_resolves_default_preprocessing_once_and_reuses_it(monkeypatch)
         raise ValueError("Force fallback")
 
     monkeypatch.setattr(
-        main,
+        pipeline,
         "default_preprocessing_options",
         fake_defaults,
     )
-    monkeypatch.setattr(main, "precenter_images", fake_precenter)
-    monkeypatch.setattr(main, "preprocess_images", fake_preprocess)
-    monkeypatch.setattr(main, "batch_common_line_sinograms", fake_sinograms)
+    monkeypatch.setattr(pipeline, "precenter_images", fake_precenter)
+    monkeypatch.setattr(pipeline, "preprocess_images", fake_preprocess)
+    monkeypatch.setattr(pipeline, "batch_common_line_sinograms", fake_sinograms)
     monkeypatch.setattr(
-        main,
+        pipeline,
         "detect_common_lines_all_pairs",
         lambda sinograms, allow_reversed, block_size: FakeCommonLines(),
     )
     monkeypatch.setattr(
-        main,
+        common_lines.graph_estimation,
         "get_transformation_for_second_image",
         force_fallback,
     )
 
-    main.build_relative_orientations_graph(
+    pipeline.build_relative_orientations_graph(
         images,
         theta=np.array([0.0, 90.0]),
         # Deliberately omit preprocessing_options.
