@@ -26,10 +26,10 @@ mode still uses the ordinary single-peak C1 common-line detector.
 Outputs: <prefix>.csv (one row per attempted triplet and mode), <prefix>.png.
 By default, detected mode uses raw images, matching detection_errors.py.
 Use --precenter and --preprocessing (with optional --mask, --subtract-background,
---clip-negative and --mask-radius-fraction overrides) to match the image
+--clip-negative, --gaussian-lowpass-sigma and --mask-radius-fraction overrides) to match the image
 preparation options of detection_errors.py and pipeline_errors.py.
-The older --pipeline-preprocessing flag remains as a shorthand for the pipeline
-centering/preprocessing defaults. Exact and perturbed modes use ground-truth
+The older --pipeline-preprocessing flag remains as a shorthand for the formerly
+default center-of-mass centering and mask/background preprocessing. Exact and perturbed modes use ground-truth
 angles and do not process images. None of these modes runs pipeline.py's graph-level
 postprocessing. For STAR metadata or MRC stacks, see detection_errors.py.
 """
@@ -429,12 +429,12 @@ def main():
         default="C1",
         help="Reference-object symmetry, Cn or Dn (default: C1)",
     )
-    add_preprocessing_arguments(parser, pipeline_defaults=False)
+    add_preprocessing_arguments(parser)
     parser.add_argument(
         "--pipeline-preprocessing",
         action="store_true",
         help="Legacy shorthand for --precenter center_of_mass "
-        "--preprocessing default (detected mode only)",
+        "--preprocessing default (not the current pipeline defaults)",
     )
     parser.add_argument(
         "--seed", type=int, default=0, help="Image/triplet/noise sampling seed"

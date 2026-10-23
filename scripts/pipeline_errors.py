@@ -9,7 +9,7 @@ and graph-level handedness selection all run inside the existing pipeline.
 Examples (from repository root):
     python -m scripts.pipeline_errors particles.npz --n-images 40 --angle-step 1
     python -m scripts.pipeline_errors particles.npz --n-third 5 --precenter none
-    python -m scripts.pipeline_errors particles.npz --preprocessing none --n-third 10
+    python -m scripts.pipeline_errors particles.npz --preprocessing default --n-third 10
     python -m scripts.pipeline_errors particles.star --image-stack particles.mrcs
 
 Ground-truth conventions: R_i maps reference coordinates into image i;
@@ -417,7 +417,7 @@ def main():
         "--seed", type=int, default=0, help="Sampling and pipeline seed"
     )
     parser.add_argument("--output", type=Path, default=Path("graph_validation"))
-    add_preprocessing_arguments(parser, pipeline_defaults=True)
+    add_preprocessing_arguments(parser)
     args = parser.parse_args()
     operators = symmetry_operators(args.symmetry)
 

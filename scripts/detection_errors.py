@@ -587,7 +587,7 @@ def main():
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", type=Path, default=Path("common_line_validation"))
-    add_preprocessing_arguments(parser, pipeline_defaults=False)
+    add_preprocessing_arguments(parser)
     parser.add_argument(
         "--uniform-baseline",
         action="store_true",
