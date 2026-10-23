@@ -3,12 +3,8 @@ import itertools
 
 import numpy as np
 
-from common_lines.centering import precenter_images, PrecenteringMethod
-from common_lines.centering.preprocessing import (
-    PreprocessingOptions,
-    default_preprocessing_options,
-    preprocess_images,
-)
+from common_lines.centering import estimate_shifts, PrecenteringMethod, shift_images
+from common_lines.preprocessing import PreprocessingOptions, preprocess_images
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.graph_estimation import (
     estimate_relative_orientation_candidates,
@@ -58,9 +54,9 @@ def build_relative_orientations_graph(
     random_seed: int | None = 0,
     handedness_reference: tuple[int, int] | None = None,
     theta: np.ndarray | None = None,
-    precenter_method: PrecenteringMethod | None = "center_of_mass",
-    common_line_block_size: int = 4,
+    precenter_method: PrecenteringMethod | None = None,
     preprocessing_options: PreprocessingOptions | None = None,
+    common_line_block_size: int = 4,
 ) -> np.ndarray:
     """
     Build a graph of relative 3D orientations between all image pairs.
@@ -87,20 +83,21 @@ def build_relative_orientations_graph(
         ``DEFAULT_THETA`` is used.
     precenter_method : PrecenteringMethod, optional
         Method used to estimate particle translations before common-line
-        detection. ``"center_of_mass"`` is used by default. Pass ``None`` to
-        disable precentering.
+        detection. Options are "center_of_mass" and "reflection".
+        ``None`` disables precentering. Default is ``None``.
+    preprocessing_options : PreprocessingOptions, optional
+        Preprocessing used both to estimate precentering shifts and, after
+        centering, before common-line detection. ``None`` disables preprocessing in
+        both stages (i.e., use the raw input images both to estimate the precentering
+        shifts and their precentered version for common-line detection; this does not
+        disable precentering itself).
+        Default is ``None``.
+        Pass ``PreprocessingOptions.default_from_images(images)`` for a sensible
+        preprocessing.
     common_line_block_size : int, optional
         Number of images per correlation block in all-pairs common-line
         detection. Larger values may improve throughput but require more memory.
         Default is 4.
-    preprocessing_options : PreprocessingOptions, optional
-        Preprocessing used both to estimate precentering shifts and, after
-        centering, before common-line detection. ``None`` selects the standard
-        circular-mask/background-subtraction defaults.
-        Pass ``PreprocessingOptions()`` to disable preprocessing in both stages
-        (i.e., use the raw input images both to estimate the precentering shifts and
-        their precentered version for common-line detection; this does not disable
-        precentering itself).
 
     Returns
     -------
@@ -146,9 +143,9 @@ def build_relative_orientations_graph_with_diagnostics(
     random_seed: int | None = 0,
     handedness_reference: tuple[int, int] | None = None,
     theta: np.ndarray | None = None,
-    precenter_method: PrecenteringMethod | None = "center_of_mass",
-    common_line_block_size: int = 4,
+    precenter_method: PrecenteringMethod | None = None,
     preprocessing_options: PreprocessingOptions | None = None,
+    common_line_block_size: int = 4,
 ) -> OrientationEstimationResult:
     """
     Estimate the directed relative-orientation graph and return diagnostics.
@@ -178,20 +175,14 @@ def build_relative_orientations_graph_with_diagnostics(
         common_line_block_size=common_line_block_size,
     )
 
-    resolved_preprocessing = (
-        default_preprocessing_options(images)
-        if preprocessing_options is None
-        else preprocessing_options
-    )
-
     if precenter_method is not None:
-        images = precenter_images(
-            images,
-            method=precenter_method,
-            preprocessing_options=resolved_preprocessing,
-        )
+        images_for_centering = preprocess_images(images, options=preprocessing_options)
+        shifts = estimate_shifts(images_for_centering, method=precenter_method)
+        del images_for_centering
 
-    images_for_detection = preprocess_images(images, options=resolved_preprocessing)
+        images = shift_images(images, shifts)
+
+    images_for_detection = preprocess_images(images, options=preprocessing_options)
     sinograms = batch_common_line_sinograms(images_for_detection, theta=theta_array)
     del images, images_for_detection
 

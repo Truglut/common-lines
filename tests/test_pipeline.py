@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import common_lines.graph_estimation
 import common_lines.pipeline as pipeline
@@ -78,7 +79,9 @@ def _patch_pipeline_to_force_fallback(monkeypatch):
         raise ValueError("No valid triplet geometry")
 
     monkeypatch.setattr(
-        common_lines.graph_estimation, "get_transformation_for_second_image", fail_triplet_estimation
+        common_lines.graph_estimation,
+        "get_transformation_for_second_image",
+        fail_triplet_estimation,
     )
     return angle_1, angle_2
 
@@ -286,107 +289,80 @@ def test_fallback_and_reconstitution_edges_share_i_to_j_convention(monkeypatch):
             )
 
 
-def test_pipeline_resolves_default_preprocessing_once_and_reuses_it(monkeypatch):
-    """The same resolved defaults are used for centering and detection."""
+@pytest.mark.parametrize("method", [None, "center_of_mass", "reflection"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_pipeline_preprocessing_order(monkeypatch, method, enabled):
+    _patch_pipeline_to_force_fallback(monkeypatch)
 
-    images = np.zeros((3, 5, 5), dtype=np.float64)
-    centered_images = np.full_like(images, 2.0)
-    detection_images = np.full_like(images, 3.0)
+    images = np.arange(75, dtype=np.float64).reshape(3, 5, 5) - 30.0
+    original = images.copy()
+    centered = images + 10.0
+    shifts = np.zeros((3, 2))
 
-    resolved_options = pipeline.PreprocessingOptions(
-        mask=np.ones((5, 5), dtype=np.float64),
-        subtract_background=False,
-        clip_negative=True,
-    )
-
+    options = pipeline.PreprocessingOptions(clip_negative=True) if enabled else None
+    real_preprocess = pipeline.preprocess_images
     calls = []
+    processed_batches = []
 
-    def fake_defaults(input_images):
-        calls.append(("defaults", input_images, resolved_options))
-        assert input_images is images
-        return resolved_options
+    expected_options = options
+    expected_method = method
 
-    def fake_precenter(input_images, *, method, preprocessing_options):
-        calls.append(("precenter", input_images, preprocessing_options))
+    def preprocess(batch, *, options):
+        assert options is expected_options
+        expected = images if not processed_batches else centered
+        assert batch is expected
 
-        assert input_images is images
-        assert method == "center_of_mass"
-        assert preprocessing_options is resolved_options
+        result = real_preprocess(batch, options=options)
+        calls.append("preprocess")
+        processed_batches.append(result)
+        return result
 
-        return centered_images
+    def estimate(batch, *, method):
+        assert method == expected_method
+        assert batch is processed_batches[0]
+        calls.append("estimate")
+        return shifts
 
-    def fake_preprocess(input_images, *, options):
-        calls.append(("preprocess", input_images, options))
+    def shift(batch, corrections):
+        assert batch is images
+        assert corrections is shifts
+        calls.append("shift")
+        return centered
 
-        assert input_images is centered_images
-        assert options is resolved_options
+    def sinograms(batch, *, theta):
+        assert batch is processed_batches[-1]
 
-        return detection_images
-
-    def fake_sinograms(input_images, *, theta):
-        calls.append(("sinograms", input_images, None))
-
-        assert input_images is detection_images
-
-        return np.zeros(
-            (images.shape[0], len(theta), images.shape[-1]),
-            dtype=np.float64,
+        expected = centered if method is not None else images
+        np.testing.assert_array_equal(
+            batch,
+            real_preprocess(expected, options=options),
         )
 
-    angle_1 = np.array(
-        [
-            [0.0, 10.0, 25.0],
-            [40.0, 0.0, 60.0],
-            [80.0, 110.0, 0.0],
-        ]
-    )
-    angle_2 = np.array(
-        [
-            [0.0, 40.0, 80.0],
-            [10.0, 0.0, 110.0],
-            [25.0, 60.0, 0.0],
-        ]
-    )
+        calls.append("sinograms")
+        return np.zeros((3, len(theta), 5))
 
-    class FakeCommonLines:
-        def oriented_angles(self, theta):
-            return angle_1, angle_2
-
-    def force_fallback(**kwargs):
-        raise ValueError("Force fallback")
-
+    monkeypatch.setattr(pipeline, "preprocess_images", preprocess)
+    monkeypatch.setattr(pipeline, "estimate_shifts", estimate)
+    monkeypatch.setattr(pipeline, "shift_images", shift)
     monkeypatch.setattr(
         pipeline,
-        "default_preprocessing_options",
-        fake_defaults,
+        "batch_common_line_sinograms",
+        sinograms,
     )
-    monkeypatch.setattr(pipeline, "precenter_images", fake_precenter)
-    monkeypatch.setattr(pipeline, "preprocess_images", fake_preprocess)
-    monkeypatch.setattr(pipeline, "batch_common_line_sinograms", fake_sinograms)
-    monkeypatch.setattr(
-        pipeline,
-        "detect_common_lines_all_pairs",
-        lambda sinograms, allow_reversed, block_size: FakeCommonLines(),
-    )
-    monkeypatch.setattr(
-        common_lines.graph_estimation,
-        "get_transformation_for_second_image",
-        force_fallback,
-    )
+
+    # Omit disabled options so these cases also exercise the defaults.
+    kwargs = {}
+    if method is not None:
+        kwargs["precenter_method"] = method
+    if enabled:
+        kwargs["preprocessing_options"] = options
 
     pipeline.build_relative_orientations_graph(
         images,
         theta=np.array([0.0, 90.0]),
-        # Deliberately omit preprocessing_options.
+        **kwargs,
     )
 
-    assert [name for name, _, _ in calls] == [
-        "defaults",
-        "precenter",
-        "preprocess",
-        "sinograms",
-    ]
-
-    # The defaults are resolved once and the exact same object is reused.
-    assert calls[1][2] is resolved_options
-    assert calls[2][2] is resolved_options
+    expected_calls = ["preprocess", "estimate", "shift"] if method is not None else []
+    assert calls == expected_calls + ["preprocess", "sinograms"]
+    np.testing.assert_array_equal(images, original)

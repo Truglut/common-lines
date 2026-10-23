@@ -4,12 +4,9 @@ from typing import Literal
 
 import numpy as np
 
-from common_lines.centering.preprocessing import default_preprocessing_options
-
 from .center_of_mass import estimate_center_of_mass_shifts
 from .reflection import estimate_reflection_shifts
 from .shifts import shift_images
-from .preprocessing import PreprocessingOptions
 
 PrecenteringMethod = Literal["reflection", "center_of_mass"]
 
@@ -18,46 +15,31 @@ def estimate_shifts(
     images: np.ndarray,
     *,
     method: PrecenteringMethod = "center_of_mass",
-    preprocessing_options: PreprocessingOptions | None = None,
     **kwargs,
 ) -> np.ndarray:
     """
     Estimate translations that approximately center an image batch.
 
-    By default, the images are preprocessed with an inscribed circular mask
-    and background subtraction before the shifts are estimated. The same
-    preprocessing default is used for both ``"center_of_mass"`` and
-    ``"reflection"``.
-
-    Pass ``PreprocessingOptions()`` explicitly to estimate shifts from the
-    unprocessed images.
-
     Parameters
     ----------
     images
         Image batch with shape ``(n_images, height, width)``.
+        Any preprocessing must be performed by the caller.
     method
-        Centering method. Either ``"center_of_mass"`` or ``"reflection"``.
-    preprocessing_options
-        Preprocessing used only for estimating the shifts. The resulting
-        shifts are applied to the original input images.
-    """
-    if preprocessing_options is None:
-        preprocessing_options = default_preprocessing_options(images)
+        Centering method: ``"center_of_mass"`` or ``"reflection"``.
+    **kwargs
+        Additional options passed to the selected shift estimator.
 
+    Returns
+    -------
+    numpy.ndarray
+        Array of shape ``(n_images, 2)`` containing ``(shift_y, shift_x)``.
+    """
     if method == "reflection":
-        return estimate_reflection_shifts(
-            images,
-            preprocessing_options=preprocessing_options,
-            **kwargs,
-        )
+        return estimate_reflection_shifts(images, **kwargs)
 
     if method == "center_of_mass":
-        return estimate_center_of_mass_shifts(
-            images,
-            preprocessing_options=preprocessing_options,
-            **kwargs,
-        )
+        return estimate_center_of_mass_shifts(images, **kwargs)
 
     raise ValueError(f"Unknown centering method {method!r}.")
 
@@ -66,15 +48,13 @@ def precenter_images(
     images: np.ndarray,
     *,
     method: PrecenteringMethod = "center_of_mass",
-    preprocessing_options: PreprocessingOptions | None = None,
     **kwargs,
 ) -> np.ndarray:
     """
-    Estimate particle shifts and apply them to the original images.
+    Estimate centering shifts and apply them to the supplied images.
 
-    ``preprocessing_options`` affects only the images used to estimate the
-    shifts. Once the shifts have been estimated, they are applied to the
-    original input images.
+    Any preprocessing must be performed by the caller. The same supplied
+    images are used for shift estimation and translation.
 
     Parameters
     ----------
@@ -82,18 +62,13 @@ def precenter_images(
         Image batch with shape ``(n_images, height, width)``.
     method
         Method used to estimate the translations.
-    preprocessing_options
-        Preprocessing used when estimating the shifts.
+    **kwargs
+        Additional options passed to the selected shift estimator.
 
     Returns
     -------
     numpy.ndarray
-        Shifted copies of the original images.
+        Shifted copies of the supplied images.
     """
-    shifts = estimate_shifts(
-        images,
-        method=method,
-        preprocessing_options=preprocessing_options,
-        **kwargs,
-    )
+    shifts = estimate_shifts(images, method=method, **kwargs)
     return shift_images(images, shifts)
