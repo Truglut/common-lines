@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
 
 @dataclass
@@ -40,6 +41,7 @@ class PreprocessingOptions:
     subtract_background: bool = False
     background_mask: np.ndarray | None = None
     clip_negative: bool = False
+    gaussian_lowpass_sigma: float | None = None
 
     @classmethod
     def default_from_images(cls, images: np.ndarray) -> PreprocessingOptions:
@@ -92,6 +94,10 @@ def preprocess_images(
         background_mask=options.background_mask,
         image_batch_shape=images.shape,
     )
+
+    sigma = options.gaussian_lowpass_sigma
+    if sigma is not None:
+        processed = gaussian_filter(processed, sigma=(0, sigma, sigma))
 
     if options.subtract_background:
         if background_mask is None:
