@@ -1,5 +1,5 @@
 """
-Benchmark C1 relative rotations recovered by Van Heel's angular reconstitution.
+Benchmark symmetry-aware relative rotations from Van Heel angular reconstitution.
 
 Examples (from the repository root):
     python -m scripts.orientation_errors data/particles.npz --n-images 40
@@ -8,7 +8,7 @@ Examples (from the repository root):
         --max-triplets 1000 --angle-step 1
 
 The three modes share the same sampled triplets:
-  exact:       ground-truth common lines (no image data needed)
+  exact:       common lines from one consistent choice of ground-truth orientations
   perturbed:   ground-truth common-line angles plus independent Gaussian noise
   detected:    common lines measured from images using the project's detector
 
@@ -16,7 +16,12 @@ Each valid triplet yields three relative rotations. A single handedness branch i
 chosen for the *whole triplet* using ground truth, purely for validation. This
 oracle selection is NOT a deployable handedness estimator. The benchmark tests
 local triplet reconstitution, not the full graph aggregation/handedness stage
-of build_relative_orientations_graph().
+of build_relative_orientations_graph(). Symmetry-aware validation minimizes over
+CONSISTENT symmetry-equivalent orientations of all three triplet images, fixing
+the symmetry gauge of the first image. This is an oracle scoring convention, not
+a symmetry-aware angular-reconstitution method. In the exact/perturbed modes,
+common lines are calculated from one consistent choice of orientations; detected
+mode still uses the ordinary single-peak C1 common-line detector.
 
 Outputs: <prefix>.csv (one row per attempted triplet and mode), <prefix>.png.
 By default, detected mode uses raw images, matching detection_errors.py.
@@ -25,7 +30,7 @@ Use --precenter and --preprocessing (with optional --mask, --subtract-background
 preparation options of detection_errors.py and pipeline_errors.py.
 The older --pipeline-preprocessing flag remains as a shorthand for the pipeline
 centering/preprocessing defaults. Exact and perturbed modes use ground-truth
-angles and do not process images. None of these modes runs main.py's graph-level
+angles and do not process images. None of these modes runs pipeline.py's graph-level
 postprocessing. For STAR metadata or MRC stacks, see detection_errors.py.
 """
 
@@ -50,7 +55,7 @@ if __package__:
         prepare_images,
         resolve_preprocessing_options,
     )
-    from .detection_errors import read_images, read_metadata
+    from .detection_errors import read_images, read_metadata, symmetry_operators
 else:
     from _benchmark_preprocessing import (
         add_preprocessing_arguments,
@@ -58,7 +63,7 @@ else:
         prepare_images,
         resolve_preprocessing_options,
     )
-    from detection_errors import read_images, read_metadata
+    from detection_errors import read_images, read_metadata, symmetry_operators
 
 
 EDGE_NAMES = ("ij", "ik", "jk")
@@ -78,6 +83,8 @@ CSV_COLUMNS = (
     "error_jk_deg",
     "mean_rotation_error_deg",
     "max_rotation_error_deg",
+    "symmetry_operator_j",
+    "symmetry_operator_k",
 )
 
 
@@ -186,13 +193,50 @@ def rotation_error_deg(estimated, expected):
     return float(np.rad2deg(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
 
 
-def evaluate_triplet(i, j, k, first, second, correlation, matrices):
+def symmetry_triplet_errors(estimates, matrices, symmetry_ops):
+    """Best errors for a triplet under a *consistent* symmetry assignment.
+
+    estimates are (Q_ij, Q_ik, Q_jk), mapping coordinates i->j, i->k,
+    and j->k respectively. Orientations R_a map reference->image a.
+
+    For a symmetry group G acting in reference coordinates, the physically
+    equivalent orientations are R_a @ S_a. A common simultaneous right
+    multiplication of all S_a does not change relative rotations, so set
+    S_i=I and optimize over S_j, S_k. Hence the j->k truth MUST use
+    S_k @ S_j.T, not an independently chosen group element.
+
+    Returns (errors for the three edges, operator index for j, index for k).
+    This is an oracle evaluation using ground truth, not part of estimation.
+    """
+    ri, rj, rk = matrices
+    qij, qik, qjk = estimates
+    ops = np.asarray(symmetry_ops)
+    ej = rotation_errors_for_candidates(qij, rj @ ops @ ri.T)
+    ek = rotation_errors_for_candidates(qik, rk @ ops @ ri.T)
+    relative_symmetry = ops[:, None] @ np.swapaxes(ops[None, :], -1, -2)
+    # Indexed [k,j]: R_k S_k S_j.T R_j.T.
+    true_jk = rk @ relative_symmetry @ rj.T
+    ejk = rotation_errors_for_candidates(qjk, true_jk)
+    costs = ej[None, :] + ek[:, None] + ejk
+    k_op, j_op = np.unravel_index(np.argmin(costs), costs.shape)
+    return np.array([ej[j_op], ek[k_op], ejk[k_op, j_op]]), int(j_op), int(k_op)
+
+
+def rotation_errors_for_candidates(estimate, truths):
+    """Geodesic error, vectorized over symmetry candidate matrices."""
+    trace = np.einsum("ab,...ab->...", estimate, truths)
+    return np.rad2deg(np.arccos(np.clip((trace - 1.0) / 2.0, -1.0, 1.0)))
+
+
+def evaluate_triplet(i, j, k, first, second, correlation, matrices, symmetry_ops=None):
     """Recover three relative rotations, with ONE oracle hand per triplet.
 
     Nearest-rotation projection is necessary for perturbed/inconsistent angles:
     the analytic angular-reconstitution solver can return nonorthogonal matrices.
     The main graph pipeline likewise projects averaged estimates onto SO(3).
     """
+    if symmetry_ops is None:
+        symmetry_ops = np.eye(3)[None, ...]
     angles, conditioning, min_corr, mean_corr = triplet_measurements(
         i, j, k, first, second, correlation
     )
@@ -207,33 +251,25 @@ def evaluate_triplet(i, j, k, first, second, correlation, matrices):
         error_jk_deg=np.nan,
         mean_rotation_error_deg=np.nan,
         max_rotation_error_deg=np.nan,
+        symmetry_operator_j=-1,
+        symmetry_operator_k=-1,
     )
     if not np.all(np.isfinite(angles)):
         row["status"] = "missing_angles"
         return row
     try:
         branches = compute_transformation_matrices_from_angles(*angles)
-        truths = (
-            matrices[j] @ matrices[i].T,
-            matrices[k] @ matrices[i].T,
-            matrices[k] @ matrices[j].T,
-        )
-        branch_errors = []
+        branch_results = []
         for branch in branches:
             r_i, r_j, r_k = (nearest_rotation(r) for r in branch)
             estimates = (r_j @ r_i.T, r_k @ r_i.T, r_k @ r_j.T)
-            branch_errors.append(
-                np.array(
-                    [
-                        rotation_error_deg(est, true)
-                        for est, true in zip(estimates, truths)
-                    ]
-                )
+            branch_results.append(
+                symmetry_triplet_errors(estimates, matrices[[i, j, k]], symmetry_ops)
             )
-        # Ground-truth branch choice is ONLY a scoring convention, not part of
-        # the reconstruction algorithm. Never select branches edge-by-edge.
-        hand = int(np.argmin([np.mean(e) for e in branch_errors]))
-        errors = branch_errors[hand]
+        # One oracle handedness AND mutually consistent symmetry assignments
+        # per triplet. Never optimize symmetry/handedness edge by edge.
+        hand = int(np.argmin([np.mean(item[0]) for item in branch_results]))
+        errors, j_op, k_op = branch_results[hand]
     except (ValueError, np.linalg.LinAlgError, FloatingPointError):
         row["status"] = "reconstruction_failed"
         return row
@@ -245,12 +281,22 @@ def evaluate_triplet(i, j, k, first, second, correlation, matrices):
         error_jk_deg=errors[2],
         mean_rotation_error_deg=errors.mean(),
         max_rotation_error_deg=errors.max(),
+        symmetry_operator_j=j_op,
+        symmetry_operator_k=k_op,
     )
     return row
 
 
 def evaluate_mode(
-    label, sigma, triplets, first, second, correlation, matrices, indices
+    label,
+    sigma,
+    triplets,
+    first,
+    second,
+    correlation,
+    matrices,
+    indices,
+    symmetry_ops=None,
 ):
     rows = []
     for i, j, k in triplets:
@@ -261,7 +307,11 @@ def evaluate_mode(
             "particle_j": int(indices[j] + 1),
             "particle_k": int(indices[k] + 1),
         }
-        row.update(evaluate_triplet(i, j, k, first, second, correlation, matrices))
+        row.update(
+            evaluate_triplet(
+                i, j, k, first, second, correlation, matrices, symmetry_ops=symmetry_ops
+            )
+        )
         rows.append(row)
     return rows
 
@@ -374,6 +424,11 @@ def main():
         default=2.0,
         help="Detector angular step, in degrees",
     )
+    parser.add_argument(
+        "--symmetry",
+        default="C1",
+        help="Reference-object symmetry, Cn or Dn (default: C1)",
+    )
     add_preprocessing_arguments(parser, pipeline_defaults=False)
     parser.add_argument(
         "--pipeline-preprocessing",
@@ -386,6 +441,7 @@ def main():
     )
     parser.add_argument("--output", type=Path, default=Path("orientation_validation"))
     args = parser.parse_args()
+    operators = symmetry_operators(args.symmetry)
 
     if args.pipeline_preprocessing:
         if (
@@ -423,12 +479,20 @@ def main():
     dummy_corr = np.full_like(first, np.nan)
     grouped = {}
 
-    print("Symmetry: C1")
+    print(f"Symmetry: {args.symmetry.upper()} (consistent triplet scoring)")
     print(f"Images selected: {len(indices)}; triplets selected: {len(triplets)}")
     if "exact" in args.modes:
         label = "exact"
         rows = evaluate_mode(
-            label, 0.0, triplets, first, second, dummy_corr, selected_matrices, indices
+            label,
+            0.0,
+            triplets,
+            first,
+            second,
+            dummy_corr,
+            selected_matrices,
+            indices,
+            operators,
         )
         grouped[label] = rows
         print_summary(rows, label)
@@ -437,7 +501,15 @@ def main():
             label = f"noise_{sigma:g}deg"
             a, b = perturb_angles(first, second, sigma, rng)
             rows = evaluate_mode(
-                label, sigma, triplets, a, b, dummy_corr, selected_matrices, indices
+                label,
+                sigma,
+                triplets,
+                a,
+                b,
+                dummy_corr,
+                selected_matrices,
+                indices,
+                operators,
             )
             grouped[label] = rows
             print_summary(rows, label)
@@ -461,7 +533,7 @@ def main():
         )
         label = "detected"
         rows = evaluate_mode(
-            label, np.nan, triplets, a, b, corr, selected_matrices, indices
+            label, np.nan, triplets, a, b, corr, selected_matrices, indices, operators
         )
         grouped[label] = rows
         print_summary(rows, label)

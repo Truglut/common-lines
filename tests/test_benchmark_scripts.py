@@ -145,7 +145,7 @@ def test_mask_background_and_clip_can_be_switched_independently():
 
 def test_public_pipeline_with_exact_detected_common_lines(monkeypatch):
     """Validate the full public graph path without relying on image interpolation."""
-    import common_lines.main as main
+    import common_lines.pipeline as main
     from scripts.orientation_errors import ground_truth_angles
 
     rng = np.random.default_rng(7)

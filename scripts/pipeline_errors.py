@@ -1,5 +1,5 @@
 """
-Benchmark the complete C1 relative-orientation graph estimator.
+Benchmark the complete relative-orientation graph with symmetry-aware scoring.
 
 Runs the PUBLIC graph pipeline on selected experimental or synthetic images,
 then compares every directed edge with ground-truth relative rotations.
@@ -23,7 +23,13 @@ selected for scoring is an oracle used only in this validation script.
 The saved NPZ graph is the ORIGINAL pipeline output, not the oracle-mirrored
 version. Fallback edges are included in graph accuracy but also reported
 separately: a fallback rotation does not fully determine the 3D orientation.
-This benchmark currently supports C1 only.
+C1, Cn and Dn are supported as EVALUATION symmetry groups. For each directed
+edge, the reported angular error is minimized over all equivalent true relative
+rotations R_j @ S @ R_i.T. This is an edge-wise symmetry oracle: different edges
+can choose incompatible symmetry operators, so it does NOT measure whether
+estimated rotations admit one globally consistent symmetry assignment.
+The underlying PUBLIC graph estimator remains unchanged and is not itself
+symmetry-aware.
 """
 
 import argparse
@@ -34,7 +40,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from common_lines.main import (
+from common_lines import (
     build_relative_orientations_graph_with_diagnostics,
     mirror_relative_orientations_graph,
 )
@@ -45,14 +51,14 @@ if __package__:
         configuration_description,
         resolve_preprocessing_options,
     )
-    from .detection_errors import read_images, read_metadata
+    from .detection_errors import read_images, read_metadata, symmetry_operators
 else:
     from _benchmark_preprocessing import (
         add_preprocessing_arguments,
         configuration_description,
         resolve_preprocessing_options,
     )
-    from detection_errors import read_images, read_metadata
+    from detection_errors import read_images, read_metadata, symmetry_operators
 
 
 J = np.diag([1.0, 1.0, -1.0])
@@ -65,6 +71,7 @@ CSV_COLUMNS = (
     "inverse_disagreement_deg",
     "orthogonality_residual",
     "determinant",
+    "symmetry_operator_index",
 )
 
 
@@ -92,12 +99,16 @@ def valid_rotation_mask(graph, atol=1e-5):
     return valid, residual, determinant
 
 
-def evaluate_graph(graph, used_fallback, matrices):
-    """Score one whole-graph handedness against C1 ground truth.
+def evaluate_graph(graph, used_fallback, matrices, symmetry_ops=None):
+    """Score one graph-wide handedness; minimize symmetry per directed edge.
 
-    Returns the per-directed-edge errors and auxiliary diagnostics. Invalid
-    output rotations remain invalid, and are not silently projected to SO(3).
+    True relative rotations are R_j @ S @ R_i.T (reference->image convention).
+    Minimizing S independently for each edge is an *oracle* quotient-SO(3)
+    metric, not a test of global symmetry-gauge consistency. Invalid output
+    rotations remain invalid; they are not silently projected to SO(3).
     """
+    if symmetry_ops is None:
+        symmetry_ops = np.eye(3)[None, ...]
     n = len(matrices)
     graph = np.asarray(graph, dtype=float)
     used_fallback = np.asarray(used_fallback, dtype=bool)
@@ -112,18 +123,35 @@ def evaluate_graph(graph, used_fallback, matrices):
             "Pipeline did not return any valid directed relative rotations"
         )
 
-    # truth[i,j] maps image i's coordinates into image j's coordinates.
-    truth = matrices[None, :, :, :] @ np.swapaxes(matrices[:, None, :, :], -1, -2)
     mirrored = mirror_relative_orientations_graph(graph)
-    with np.errstate(invalid="ignore"):
-        direct_errors = rotation_error_deg(graph, truth)
-        mirrored_errors = rotation_error_deg(mirrored, truth)
+    inverse_i = np.swapaxes(matrices[:, None, :, :], -1, -2)
+    # Retain the minimizing symmetry index for each directed edge, separately
+    # for the two graph-wide handedness branches.
+    direct_errors = np.full((n, n), np.inf)
+    mirrored_errors = np.full((n, n), np.inf)
+    direct_selected = np.full((n, n), -1, dtype=int)
+    mirrored_selected = np.full((n, n), -1, dtype=int)
+    for k, operator in enumerate(symmetry_ops):
+        # truth[i,j] = R_j @ S @ R_i.T, NOT S @ R_j @ R_i.T.
+        true_rotations = (matrices @ operator)[None, :, :, :] @ inverse_i
+        with np.errstate(invalid="ignore"):
+            candidate_direct = rotation_error_deg(graph, true_rotations)
+            candidate_mirror = rotation_error_deg(mirrored, true_rotations)
+        better_direct = candidate_direct < direct_errors
+        better_mirror = candidate_mirror < mirrored_errors
+        direct_errors[better_direct] = candidate_direct[better_direct]
+        mirrored_errors[better_mirror] = candidate_mirror[better_mirror]
+        direct_selected[better_direct] = k
+        mirrored_selected[better_mirror] = k
     direct_errors[~eligible] = np.nan
     mirrored_errors[~eligible] = np.nan
 
-    # IMPORTANT: one global branch, not a per-edge oracle.
+    # IMPORTANT: one global handedness branch, NOT a per-edge hand oracle.
     use_mirror = bool(np.nanmean(mirrored_errors) < np.nanmean(direct_errors))
     errors = mirrored_errors if use_mirror else direct_errors
+    symmetry_selected = mirrored_selected if use_mirror else direct_selected
+    symmetry_selected = symmetry_selected.copy()
+    symmetry_selected[~eligible] = -1
     chosen = mirrored if use_mirror else graph
 
     # Independent estimates of i->j and j->i need not be inverses.
@@ -139,6 +167,7 @@ def evaluate_graph(graph, used_fallback, matrices):
         "determinant": det,
         "inverse_disagreement": inverse_errors,
         "used_mirrored_branch": use_mirror,
+        "symmetry_operator_index": symmetry_selected,
         "used_fallback": used_fallback,
     }
 
@@ -260,6 +289,7 @@ def save_results(
                     float(result["inverse_disagreement"][a, b]),
                     float(result["residual"][a, b]),
                     float(result["determinant"][a, b]),
+                    int(result["symmetry_operator_index"][a, b]),
                 )
             )
 
@@ -271,6 +301,7 @@ def save_results(
         selected_indices=selected_indices,
         handedness_reference=np.asarray(handedness_reference, dtype=int),
         oracle_mirrored_for_scoring=np.asarray(result["used_mirrored_branch"]),
+        symmetry_operator_index=result["symmetry_operator_index"],
         run_configuration_json=np.asarray(
             json.dumps(configuration or {}, default=str, sort_keys=True)
         ),
@@ -364,6 +395,11 @@ def main():
         help="Sinogram angular spacing in degrees (default: 2)",
     )
     parser.add_argument(
+        "--symmetry",
+        default="C1",
+        help="Reference-object symmetry, Cn or Dn (default: C1)",
+    )
+    parser.add_argument(
         "--n-third",
         type=int,
         default=1,
@@ -383,6 +419,7 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("graph_validation"))
     add_preprocessing_arguments(parser, pipeline_defaults=True)
     args = parser.parse_args()
+    operators = symmetry_operators(args.symmetry)
 
     if args.n_images < 3 or not np.isfinite(args.angle_step) or args.angle_step <= 0:
         parser.error(
@@ -409,7 +446,9 @@ def main():
     options = resolve_preprocessing_options(images, args)
     theta = np.arange(0.0, 180.0, args.angle_step)
 
-    print("Symmetry: C1")
+    print(f"Symmetry: {args.symmetry.upper()} (edge-wise symmetry-aware scoring)")
+    if len(operators) > 1:
+        print("Note: this score does not enforce graph-wide symmetry consistency.")
     print(f"Image preparation: {configuration_description(args)}")
     print(f"n_third={args.n_third}, angle_step={args.angle_step:g}, seed={args.seed}")
     estimate = build_relative_orientations_graph_with_diagnostics(
@@ -422,7 +461,12 @@ def main():
         common_line_block_size=args.common_line_block_size,
         preprocessing_options=options,
     )
-    result = evaluate_graph(estimate.graph, estimate.used_fallback, selected_matrices)
+    result = evaluate_graph(
+        estimate.graph,
+        estimate.used_fallback,
+        selected_matrices,
+        symmetry_ops=operators,
+    )
     print_summary(result, len(images), estimate.handedness_reference)
     save_results(
         args.output,
