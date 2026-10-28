@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 import common_lines.graph_estimation
-import common_lines.pipeline as pipeline
+from common_lines import pipeline
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -21,7 +21,7 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
     theta_2_deg = 100.0
 
     direct, mirrored = common_lines.graph_estimation._estimate_pairwise_fallback(
-        theta_1_deg, theta_2_deg
+        np.deg2rad(theta_1_deg), np.deg2rad(theta_2_deg)
     )
 
     _assert_rotation_matrix(direct)
@@ -61,8 +61,11 @@ def _patch_pipeline_to_force_fallback(monkeypatch):
     )
 
     class FakeCommonLines:
-        def oriented_angles(self, theta):
-            return angle_1, angle_2
+        def oriented_angles(
+            self, theta: np.ndarray, radians: bool = False
+        ) -> tuple[np.ndarray, np.ndarray]:
+            assert radians is True
+            return np.deg2rad(angle_1), np.deg2rad(angle_2)
 
     monkeypatch.setattr(
         pipeline,
@@ -196,8 +199,8 @@ def test_orientation_graph_uses_i_to_j_coordinate_convention():
 
     candidates, used_fallback = (
         common_lines.graph_estimation.estimate_relative_orientation_candidates(
-            angle_1,
-            angle_2,
+            np.deg2rad(angle_1),
+            np.deg2rad(angle_2),
             n_third=1,
             random_seed=0,
         )
@@ -239,7 +242,9 @@ def test_fallback_and_reconstitution_edges_share_i_to_j_convention(monkeypatch):
 
     def solver_with_one_forced_failure(**kwargs):
         # Force only the directed edge 0 -> 1 to use the pairwise fallback.
-        if kwargs["angle_12_in_1_deg"] == 20.0 and kwargs["angle_12_in_2_deg"] == 70.0:
+        if kwargs["angle_12_in_1_rad"] == np.deg2rad(20.0) and kwargs[
+            "angle_12_in_2_rad"
+        ] == np.deg2rad(70.0):
             raise ValueError("Force fallback for edge 0 -> 1")
 
         return real_solver(**kwargs)
@@ -252,8 +257,8 @@ def test_fallback_and_reconstitution_edges_share_i_to_j_convention(monkeypatch):
 
     candidates, used_fallback = (
         common_lines.graph_estimation.estimate_relative_orientation_candidates(
-            angle_1,
-            angle_2,
+            np.deg2rad(angle_1),
+            np.deg2rad(angle_2),
             n_third=1,
             random_seed=0,
         )

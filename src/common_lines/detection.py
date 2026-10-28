@@ -36,7 +36,7 @@ class CommonLineResult:
     reversed_match: np.ndarray | None = None
 
     def oriented_angles(
-        self, theta_1: np.ndarray, theta_2: np.ndarray
+        self, theta_1: np.ndarray, theta_2: np.ndarray, radians: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Convert the stored indices into oriented angular matrices.
@@ -47,6 +47,9 @@ class CommonLineResult:
             Angular grid used to generate the first batch of sinograms, with shape ``(A1,)``.
         theta_2
             Angular grid used to generate the second batch of sinograms, with shape ``(A2,)``.
+        radians
+            If True, the input angular grids and the outputs are in radians. Otherwise
+            all angles are in degrees.
 
         Returns
         -------
@@ -61,9 +64,10 @@ class CommonLineResult:
         angle_2 = theta_2[self.index_2]
 
         if self.reversed_match is not None:
+            full_turn = 2 * np.pi if radians else 360.0
             angle_2 = np.mod(
-                angle_2 + 180.0 * self.reversed_match,
-                360.0,
+                angle_2 + 0.5 * full_turn * self.reversed_match,
+                full_turn,
             )
 
         return angle_1, angle_2
@@ -100,6 +104,7 @@ class CommonLineGraph:
     def oriented_angles(
         self,
         theta: np.ndarray,
+        radians: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Convert the stored indices into oriented angular matrices.
@@ -114,9 +119,10 @@ class CommonLineGraph:
         angle_2 = theta[self.index.T]
 
         if self.reversed_match is not None:
+            full_turn = 2 * np.pi if radians else 360.0
             angle_2 = np.mod(
-                angle_2 + 180.0 * self.reversed_match,
-                360.0,
+                angle_2 + 0.5 * full_turn * self.reversed_match,
+                full_turn,
             )
 
         return angle_1, angle_2

@@ -1,13 +1,11 @@
 import itertools
 
+import numpy as np
+
 from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
     get_transformation_for_second_image,
 )
-
-
-import numpy as np
-
 from common_lines.procrustes import nearest_rotation
 
 
@@ -76,7 +74,7 @@ def _average_handedness_branches(
 
 
 def _estimate_pairwise_fallback(
-    theta_1_deg: float, theta_2_deg: float
+    theta_1_rad: float, theta_2_rad: float
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Return a canonical relative orientation from one pairwise common line.
@@ -85,17 +83,17 @@ def _estimate_pairwise_fallback(
     We therefore choose the minimum-angle rotation that maps the coordinates of
     common-line direction in image 1 onto the corresponding coordinates in image 2.
     Since both directions lie in their image XY planes, this is a rotation about Z
-    by ``theta_2_deg - theta_1_deg``.
+    by ``theta_2_rad - theta_1_rad``.
 
     The mirrored handedness candidate is identical for this pure in-plane
     rotation, so the same matrix is returned for both branches.
 
     Parameters
     ----------
-    theta_1_deg : float
-        Oriented common-line angle in image 1, in degrees.
-    theta_2_deg : float
-        Corresponding oriented common-line angle in image 2, in degrees.
+    theta_1_rad : float
+        Oriented common-line angle in image 1, in radians.
+    theta_2_rad : float
+        Corresponding oriented common-line angle in image 2, in radians.
 
     Returns
     -------
@@ -104,7 +102,7 @@ def _estimate_pairwise_fallback(
     numpy.ndarray
         Mirrored handedness candidate, equal to the first matrix.
     """
-    delta_rad = np.deg2rad(theta_2_deg - theta_1_deg)
+    delta_rad = theta_2_rad - theta_1_rad
     cos_delta = np.cos(delta_rad)
     sin_delta = np.sin(delta_rad)
 
@@ -136,7 +134,7 @@ def estimate_relative_orientation_candidates(
         ``(n_images, n_images)``. For pair ``(i, j)``,
         ``angle_1[i, j]`` is the common-line angle in image ``i`` and
         ``angle_2[i, j]`` is the corresponding oriented angle in image ``j``.
-        Angles are expressed in degrees.
+        Angles are expressed in radians.
     n_third
         Maximum number of valid third images used for each ordered pair.
     random_seed
@@ -181,12 +179,12 @@ def estimate_relative_orientation_candidates(
 
             try:
                 direct_r2, mirrored_r2 = get_transformation_for_second_image(
-                    angle_12_in_1_deg=float(angle_1[i, j]),
-                    angle_12_in_2_deg=float(angle_2[i, j]),
-                    angle_13_in_1_deg=float(angle_1[i, k]),
-                    angle_13_in_3_deg=float(angle_2[i, k]),
-                    angle_23_in_2_deg=float(angle_1[j, k]),
-                    angle_23_in_3_deg=float(angle_2[j, k]),
+                    angle_12_in_1_rad=float(angle_1[i, j]),
+                    angle_12_in_2_rad=float(angle_2[i, j]),
+                    angle_13_in_1_rad=float(angle_1[i, k]),
+                    angle_13_in_3_rad=float(angle_2[i, k]),
+                    angle_23_in_2_rad=float(angle_1[j, k]),
+                    angle_23_in_3_rad=float(angle_2[j, k]),
                 )
             except ValueError:
                 continue

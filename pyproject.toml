@@ -30,3 +30,8 @@ testpaths = ["tests"]
 markers = [
     "performance: performance comparison tests",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.3",
+]

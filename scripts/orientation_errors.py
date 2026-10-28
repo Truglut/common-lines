@@ -172,7 +172,7 @@ def sample_triplets(matrices, maximum, rng):
 
 
 def triplet_measurements(i, j, k, first, second, correlation):
-    """Angles as required by alignment.compute_transformation_matrices_from_angles."""
+    """Extract common-line angles in degrees and triplet diagnostics."""
     angles = (
         first[i, j],
         second[i, j],
@@ -240,25 +240,25 @@ def evaluate_triplet(i, j, k, first, second, correlation, matrices, symmetry_ops
     angles, conditioning, min_corr, mean_corr = triplet_measurements(
         i, j, k, first, second, correlation
     )
-    row = dict(
-        status="ok",
-        conditioning=conditioning,
-        min_correlation=min_corr,
-        mean_correlation=mean_corr,
-        handedness="",
-        error_ij_deg=np.nan,
-        error_ik_deg=np.nan,
-        error_jk_deg=np.nan,
-        mean_rotation_error_deg=np.nan,
-        max_rotation_error_deg=np.nan,
-        symmetry_operator_j=-1,
-        symmetry_operator_k=-1,
-    )
+    row = {
+        "status": "ok",
+        "conditioning": conditioning,
+        "min_correlation": min_corr,
+        "mean_correlation": mean_corr,
+        "handedness": "",
+        "error_ij_deg": np.nan,
+        "error_ik_deg": np.nan,
+        "error_jk_deg": np.nan,
+        "mean_rotation_error_deg": np.nan,
+        "max_rotation_error_deg": np.nan,
+        "symmetry_operator_j": -1,
+        "symmetry_operator_k": -1,
+    }
     if not np.all(np.isfinite(angles)):
         row["status"] = "missing_angles"
         return row
     try:
-        branches = compute_transformation_matrices_from_angles(*angles)
+        branches = compute_transformation_matrices_from_angles(*np.deg2rad(angles))
         branch_results = []
         for branch in branches:
             r_i, r_j, r_k = (nearest_rotation(r) for r in branch)

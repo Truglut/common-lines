@@ -45,12 +45,12 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
     # common-line directions, including any 180-degree correction introduced
     # when detection finds a reversed profile.
     angles = {
-        "angle_12_in_1_deg": 20.0,
-        "angle_12_in_2_deg": 70.0,
-        "angle_13_in_1_deg": 110.0,
-        "angle_13_in_3_deg": 35.0,
-        "angle_23_in_2_deg": 145.0,
-        "angle_23_in_3_deg": 125.0,
+        "angle_12_in_1_rad": float(np.deg2rad(20.0)),
+        "angle_12_in_2_rad": float(np.deg2rad(70.0)),
+        "angle_13_in_1_rad": float(np.deg2rad(110.0)),
+        "angle_13_in_3_rad": float(np.deg2rad(35.0)),
+        "angle_23_in_2_rad": float(np.deg2rad(145.0)),
+        "angle_23_in_3_rad": float(np.deg2rad(125.0)),
     }
 
     direct, mirrored = compute_transformation_matrices_from_angles(**angles)
@@ -70,15 +70,15 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
         assert np.allclose(R_mirrored, J @ R_direct @ J, atol=1e-10)
 
 
-def test_second_image_alignment_uses_degree_inputs_consistently():
-    """The pipeline-specific second-image solver must use the same degree convention."""
+def test_second_image_alignment_uses_radian_inputs_consistently():
+    """The pipeline-specific second-image solver must use the same radian convention."""
     angles = {
-        "angle_12_in_1_deg": 20.0,
-        "angle_12_in_2_deg": 70.0,
-        "angle_13_in_1_deg": 110.0,
-        "angle_13_in_3_deg": 35.0,
-        "angle_23_in_2_deg": 145.0,
-        "angle_23_in_3_deg": 125.0,
+        "angle_12_in_1_rad": np.deg2rad(20.0),
+        "angle_12_in_2_rad": np.deg2rad(70.0),
+        "angle_13_in_1_rad": np.deg2rad(110.0),
+        "angle_13_in_3_rad": np.deg2rad(35.0),
+        "angle_23_in_2_rad": np.deg2rad(145.0),
+        "angle_23_in_3_rad": np.deg2rad(125.0),
     }
 
     direct_triplet, mirrored_triplet = compute_transformation_matrices_from_angles(
@@ -97,12 +97,12 @@ def test_recovers_known_configuration_in_both_handednesses():
     # Both returned branches must preserve that geometry and be related by the
     # global handedness reflection.
     direct, mirrored = compute_transformation_matrices_from_angles(
-        angle_12_in_1_deg=0.0,
-        angle_12_in_2_deg=0.0,
-        angle_13_in_1_deg=90.0,
-        angle_13_in_3_deg=0.0,
-        angle_23_in_2_deg=90.0,
-        angle_23_in_3_deg=90.0,
+        angle_12_in_1_rad=np.deg2rad(0.0),
+        angle_12_in_2_rad=np.deg2rad(0.0),
+        angle_13_in_1_rad=np.deg2rad(90.0),
+        angle_13_in_3_rad=np.deg2rad(0.0),
+        angle_23_in_2_rad=np.deg2rad(90.0),
+        angle_23_in_3_rad=np.deg2rad(90.0),
     )
 
     for rotations in (direct, mirrored):
@@ -124,10 +124,10 @@ def test_rejects_degenerate_common_lines_in_reference_image():
     # a valid 3D frame and the formula would divide by sin(angle_13 - angle_12).
     with pytest.raises(ValueError, match="degenerate|parallel|sin"):
         compute_transformation_matrices_from_angles(
-            angle_12_in_1_deg=30.0,
-            angle_12_in_2_deg=10.0,
-            angle_13_in_1_deg=30.0,
-            angle_13_in_3_deg=80.0,
-            angle_23_in_2_deg=120.0,
-            angle_23_in_3_deg=45.0,
+            angle_12_in_1_rad=np.deg2rad(30.0),
+            angle_12_in_2_rad=np.deg2rad(10.0),
+            angle_13_in_1_rad=np.deg2rad(30.0),
+            angle_13_in_3_rad=np.deg2rad(80.0),
+            angle_23_in_2_rad=np.deg2rad(120.0),
+            angle_23_in_3_rad=np.deg2rad(45.0),
         )

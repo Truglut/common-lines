@@ -1,6 +1,5 @@
-import pytest
-
 import numpy as np
+import pytest
 
 from common_lines.centering import precenter_image_reflection
 from common_lines.radon import batch_common_line_sinograms

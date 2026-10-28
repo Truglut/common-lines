@@ -1,15 +1,15 @@
-from dataclasses import dataclass
 import itertools
+from dataclasses import dataclass
 
 import numpy as np
 
-from common_lines.centering import estimate_shifts, PrecenteringMethod, shift_images
-from common_lines.preprocessing import PreprocessingOptions, preprocess_images
+from common_lines.centering import PrecenteringMethod, estimate_shifts, shift_images
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.graph_estimation import (
     estimate_relative_orientation_candidates,
     select_consistent_handedness,
 )
+from common_lines.preprocessing import PreprocessingOptions, preprocess_images
 from common_lines.radon import batch_common_line_sinograms
 
 DEFAULT_THETA = np.arange(0.0, 180.0, 0.5)
@@ -189,7 +189,10 @@ def build_relative_orientations_graph_with_diagnostics(
     common_lines = detect_common_lines_all_pairs(
         sinograms, allow_reversed=True, block_size=common_line_block_size
     )
-    angle_1, angle_2 = common_lines.oriented_angles(theta_array)
+    # Input angles are in degrees, transforming the grid to radians avoids having to
+    # do it for every individual angle
+    theta_array_rad = np.deg2rad(theta_array)
+    angle_1, angle_2 = common_lines.oriented_angles(theta_array_rad, radians=True)
     del sinograms, common_lines
 
     candidates, used_fallback = estimate_relative_orientation_candidates(
@@ -253,8 +256,7 @@ def _validate_pipeline_inputs(
 
     if common_line_block_size < 1:
         raise ValueError(
-            "common_line_block_size must be at least 1, "
-            f"got {common_line_block_size}."
+            f"common_line_block_size must be at least 1, got {common_line_block_size}."
         )
 
     theta_array = np.asarray(

@@ -5,7 +5,7 @@ from common_lines.alignment import (
     compute_transformation_matrices_from_angles,
     mirror_transformation_matrices,
 )
-from common_lines.detection import detect_common_lines, CommonLineResult
+from common_lines.detection import CommonLineResult, detect_common_lines
 from common_lines.radon import batch_common_line_sinograms
 
 THETA_DEG = np.arange(0.0, 180.0, 1.0)
@@ -38,28 +38,28 @@ def _first(value):
     return np.asarray(value).reshape(-1)[0]
 
 
-def _oriented_pair(result, theta: np.ndarray) -> tuple[float, float]:
+def _oriented_pair(result, theta_deg: np.ndarray) -> tuple[float, float]:
     """Convert one pairwise detection result into two scalar oriented angles."""
-    angle_1, angle_2 = result.oriented_angles(theta, theta)
+    angle_1, angle_2 = result.oriented_angles(theta_deg, theta_deg)
     return float(_first(angle_1)), float(_first(angle_2))
 
 
 def _solve_detected_triplet(
     detected: tuple[object, object, object],
-    theta: np.ndarray,
+    theta_deg: np.ndarray,
 ):
     """Convert detected indices to angles and reconstruct both handednesses."""
-    angle_12_in_1, angle_12_in_2 = _oriented_pair(detected[0], theta)
-    angle_13_in_1, angle_13_in_3 = _oriented_pair(detected[1], theta)
-    angle_23_in_2, angle_23_in_3 = _oriented_pair(detected[2], theta)
+    angle_12_in_1, angle_12_in_2 = _oriented_pair(detected[0], theta_deg)
+    angle_13_in_1, angle_13_in_3 = _oriented_pair(detected[1], theta_deg)
+    angle_23_in_2, angle_23_in_3 = _oriented_pair(detected[2], theta_deg)
 
     return compute_transformation_matrices_from_angles(
-        angle_12_in_1_deg=angle_12_in_1,
-        angle_12_in_2_deg=angle_12_in_2,
-        angle_13_in_1_deg=angle_13_in_1,
-        angle_13_in_3_deg=angle_13_in_3,
-        angle_23_in_2_deg=angle_23_in_2,
-        angle_23_in_3_deg=angle_23_in_3,
+        angle_12_in_1_rad=np.deg2rad(angle_12_in_1),
+        angle_12_in_2_rad=np.deg2rad(angle_12_in_2),
+        angle_13_in_1_rad=np.deg2rad(angle_13_in_1),
+        angle_13_in_3_rad=np.deg2rad(angle_13_in_3),
+        angle_23_in_2_rad=np.deg2rad(angle_23_in_2),
+        angle_23_in_3_rad=np.deg2rad(angle_23_in_3),
     )
 
 
@@ -106,7 +106,7 @@ def _make_asymmetric_volume(size: int = 65) -> np.ndarray:
     weights = np.array([1.00, 0.75, 0.90, 0.65, 0.55])
 
     volume = np.zeros_like(x)
-    for (cz, cy, cx), sigma, weight in zip(centers_zyx, sigmas, weights):
+    for (cz, cy, cx), sigma, weight in zip(centers_zyx, sigmas, weights):  # ty: ignore[not-iterable]
         r2 = (z - cz) ** 2 + (y - cy) ** 2 + (x - cx) ** 2
         volume += weight * np.exp(-0.5 * r2 / sigma**2)
 
@@ -275,12 +275,12 @@ def test_detect_common_lines_keeps_compact_array_outputs_for_a_single_pair():
 def test_hand_checkable_orthogonal_common_lines_return_both_handednesses():
     """Exact common-line angles give the expected solution and its mirror."""
     direct, mirrored = compute_transformation_matrices_from_angles(
-        angle_12_in_1_deg=0.0,
-        angle_12_in_2_deg=0.0,
-        angle_13_in_1_deg=90.0,
-        angle_13_in_3_deg=0.0,
-        angle_23_in_2_deg=90.0,
-        angle_23_in_3_deg=90.0,
+        angle_12_in_1_rad=np.deg2rad(0.0),
+        angle_12_in_2_rad=np.deg2rad(0.0),
+        angle_13_in_1_rad=np.deg2rad(90.0),
+        angle_13_in_3_rad=np.deg2rad(0.0),
+        angle_23_in_2_rad=np.deg2rad(90.0),
+        angle_23_in_3_rad=np.deg2rad(90.0),
     )
     expected = (EXPECTED_R1, EXPECTED_R2, EXPECTED_R3)
     expected_mirrored = mirror_transformation_matrices(expected)

@@ -1,11 +1,13 @@
 """Regression tests for scripts/orientation_errors.py."""
 
-import numpy as np
 import sys
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from common_lines.alignment import HANDEDNESS_REFLECTION
 from scripts.orientation_errors import (
     evaluate_triplet,
     ground_truth_angles,
@@ -13,7 +15,6 @@ from scripts.orientation_errors import (
     rotation_error_deg,
     sample_triplets,
 )
-from common_lines.alignment import HANDEDNESS_REFLECTION
 
 
 def random_rotations(n=10, seed=12):

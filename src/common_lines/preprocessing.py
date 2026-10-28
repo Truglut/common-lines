@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -151,10 +152,10 @@ def _prepare_mask(
     _, height, width = image_batch_shape
 
     if not np.all(np.isfinite(mask)):
-        raise ValueError(f"Mask must contain only finite values.")
+        raise ValueError("Mask must contain only finite values.")
 
     if np.any(mask < 0.0) or np.any(mask > 1.0):
-        raise ValueError(f"Mask values must lie in [0, 1].")
+        raise ValueError("Mask values must lie in [0, 1].")
 
     if mask.ndim == 2:
         if mask.shape != (height, width):
