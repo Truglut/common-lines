@@ -1,94 +1,71 @@
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import overload
 
 import numpy as np
-
-from common_lines.detection import CommonLineResult
 
 HANDEDNESS_REFLECTION = np.diag([1.0, 1.0, -1.0])
 RotationTriplet = tuple[np.ndarray, np.ndarray, np.ndarray]
 HandednessPair = tuple[RotationTriplet, RotationTriplet]
 
 
+@dataclass(frozen=True, slots=True)
+class CommonLineAngles:
+    """One oriented common-line correspondence, expressed in radians.
+
+    ``source_rad`` and ``target_rad`` describe the same oriented 3D direction
+    in the source and target image planes, respectively. Any detector-reversal
+    correction must already be included. Source and target refer to the ordered
+    endpoints of this pair, not to fixed image numbers in a triplet.
+
+    Each field is a scalar; batched alignment is not currently supported.
+    """
+
+    first_rad: float
+    second_rad: float
+
+
+@dataclass(frozen=True, slots=True)
+class CommonLineTriplet:
+    """Oriented common lines connecting three images, in radians.
+
+    The pairs are ordered 1 -> 2, 1 -> 3, and 2 -> 3. Thus, for example,
+    ``two_with_three.first_rad`` is measured in image 2 and
+    ``two_with_three.second_rad`` is measured in image 3. Image 1 defines
+    the reference coordinate system for angular reconstitution.
+    """
+
+    one_with_two: CommonLineAngles
+    one_with_three: CommonLineAngles
+    two_with_three: CommonLineAngles
+
+    def angular_differences(self) -> tuple[float, float, float]:
+        """Return signed common-line separations in images 1, 2, and 3.
+
+        Returns
+        -------
+        a, b, c : float
+            Differences in radians, using these subtraction orders:
+
+            * ``a``: line 1-3 minus line 1-2, both measured in image 1.
+            * ``b``: line 2-3 minus line 1-2, both measured in image 2.
+            * ``c``: line 2-3 minus line 1-3, both measured in image 3.
+
+        Notes
+        -----
+        Differences are returned directly, without wrapping or taking absolute
+        values. Angular reconstitution uses their signs and trigonometric values
+        to recover the common-line directions in the reference frame.
+        """
+        return (
+            self.one_with_three.first_rad - self.one_with_two.first_rad,
+            self.two_with_three.first_rad - self.one_with_two.second_rad,
+            self.two_with_three.second_rad - self.one_with_three.second_rad,
+        )
+
+
 def compute_transformation_matrices(
-    common_line_result_12: CommonLineResult,
-    common_line_result_13: CommonLineResult,
-    common_line_result_23: CommonLineResult,
-    theta_deg: np.ndarray,
-    eps: float = 1.0e-6,
-) -> HandednessPair:
-    """
-    Recover the coordinate frames of three images from their common lines.
-
-    Image 1 defines the reference coordinate system. For each image ``i``, the
-    returned matrix ``R_i`` transforms coordinates from this reference system
-    to the coordinate system of image ``i``:
-
-        v_i = R_i @ v_ref
-
-    Therefore, rows 0 and 1 of ``R_i`` are the image-plane basis vectors
-    expressed in reference coordinates, and row 2 is the projection direction.
-    For image 1, ``R_1`` is the identity matrix.
-
-    Two solutions are returned because common-line geometry determines the
-    orientations only up to a global handedness reflection.
-
-    Parameters
-    ----------
-    common_line_result_12 : CommonLineResult
-        Detected oriented common line between images 1 and 2.
-    common_line_result_13 : CommonLineResult
-        Detected oriented common line between images 1 and 3.
-    common_line_result_23 : CommonLineResult
-        Detected oriented common line between images 2 and 3.
-    theta_deg : np.ndarray
-        Angular grid used to generate the sinograms, in degrees.
-    eps : float, optional
-        Numerical tolerance used to reject degenerate or inconsistent triplets.
-
-    Returns
-    -------
-    tuple
-        Pair ``(direct, mirrored)``. Each element is ``(R_1, R_2, R_3)``,
-        with the matrices defined by ``v_i = R_i @ v_ref``. The two solutions
-        are related by conjugation with ``HANDEDNESS_REFLECTION``.
-
-    Notes
-    -----
-    Common-line information alone cannot determine which of the two handedness
-    solutions corresponds to the physical structure.
-    """
-    theta_rad = np.deg2rad(theta_deg)
-    # Extract the angles of the common lines from the results
-    angle_12_in_1, angle_12_in_2 = common_line_result_12.oriented_angles(
-        theta_1=theta_rad, theta_2=theta_rad, radians=True
-    )
-    angle_13_in_1, angle_13_in_3 = common_line_result_13.oriented_angles(
-        theta_1=theta_rad, theta_2=theta_rad, radians=True
-    )
-    angle_23_in_2, angle_23_in_3 = common_line_result_23.oriented_angles(
-        theta_1=theta_rad, theta_2=theta_rad, radians=True
-    )
-
-    return compute_transformation_matrices_from_angles(
-        angle_12_in_1_rad=float(angle_12_in_1),
-        angle_12_in_2_rad=float(angle_12_in_2),
-        angle_13_in_1_rad=float(angle_13_in_1),
-        angle_13_in_3_rad=float(angle_13_in_3),
-        angle_23_in_2_rad=float(angle_23_in_2),
-        angle_23_in_3_rad=float(angle_23_in_3),
-        eps=eps,
-    )
-
-
-def compute_transformation_matrices_from_angles(
-    angle_12_in_1_rad: float,
-    angle_12_in_2_rad: float,
-    angle_13_in_1_rad: float,
-    angle_13_in_3_rad: float,
-    angle_23_in_2_rad: float,
-    angle_23_in_3_rad: float,
-    eps: float = 1.0e-6,
+    triplet: CommonLineTriplet, eps: float = 1.0e-6
 ) -> HandednessPair:
     """
     Recover the coordinate frames of three images from oriented common-line angles.
@@ -114,15 +91,9 @@ def compute_transformation_matrices_from_angles(
 
     Parameters
     ----------
-    angle_12_in_1_rad, angle_12_in_2_rad
-        Oriented angles, in radians, of the common line shared by images 1 and 2,
-        expressed in the coordinate systems of images 1 and 2 respectively.
-    angle_13_in_1_rad, angle_13_in_3_rad
-        Oriented angles, in radians, of the common line shared by images 1 and 3,
-        expressed in the coordinate systems of images 1 and 3 respectively.
-    angle_23_in_2_rad, angle_23_in_3_rad
-        Oriented angles, in radians, of the common line shared by images 2 and 3,
-        expressed in the coordinate systems of images 2 and 3 respectively.
+    triplet : CommonLineTriplet
+        Three oriented common-line correspondences, in radians, ordered
+        1 -> 2, 1 -> 3, and 2 -> 3.
     eps
         Numerical tolerance used to reject degenerate or inconsistent triplets.
 
@@ -139,29 +110,21 @@ def compute_transformation_matrices_from_angles(
     Common-line information alone cannot determine which handedness solution
     corresponds to the physical structure.
     """
-    c_12, c_13, c_23 = _get_common_lines_from_angles(
-        angle_12_in_1_rad,
-        angle_12_in_2_rad,
-        angle_13_in_1_rad,
-        angle_13_in_3_rad,
-        angle_23_in_2_rad,
-        angle_23_in_3_rad,
-        eps,
-    )
+    c_12, c_13, c_23 = _get_common_lines_from_angles(triplet, eps)
 
     # Compute the rotation matrices for each image based on the detected angles
     R1 = np.eye(3)  # Image 1 is fixed to the identity matrix
     R2 = _compute_matrix_from_common_lines(
-        theta_a_rad=angle_12_in_2_rad,
+        theta_a_rad=triplet.one_with_two.second_rad,
         c_a=c_12,
-        theta_b_rad=angle_23_in_2_rad,
+        theta_b_rad=triplet.two_with_three.first_rad,
         c_b=c_23,
         eps=eps,
     )
     R3 = _compute_matrix_from_common_lines(
-        theta_a_rad=angle_13_in_3_rad,
+        theta_a_rad=triplet.one_with_three.second_rad,
         c_a=c_13,
-        theta_b_rad=angle_23_in_3_rad,
+        theta_b_rad=triplet.two_with_three.second_rad,
         c_b=c_23,
         eps=eps,
     )
@@ -173,13 +136,7 @@ def compute_transformation_matrices_from_angles(
 
 
 def _get_common_lines_from_angles(
-    angle_12_in_1_rad: float,
-    angle_12_in_2_rad: float,
-    angle_13_in_1_rad: float,
-    angle_13_in_3_rad: float,
-    angle_23_in_2_rad: float,
-    angle_23_in_3_rad: float,
-    eps: float = 1.0e-6,
+    triplet: CommonLineTriplet, eps: float = 1.0e-6
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Recover the common-line directions in the reference coordinate system.
@@ -200,16 +157,14 @@ def _get_common_lines_from_angles(
     ## Compute the 3D coordinates of the common lines
     # Image 1 defines the reference coordinate system. Therefore the common
     # lines observed in image 1 lie directly in the reference XY plane.
-    c_12[0] = np.cos(angle_12_in_1_rad)
-    c_12[1] = np.sin(angle_12_in_1_rad)
-    c_13[0] = np.cos(angle_13_in_1_rad)
-    c_13[1] = np.sin(angle_13_in_1_rad)
+    c_12[0] = np.cos(triplet.one_with_two.first_rad)
+    c_12[1] = np.sin(triplet.one_with_two.first_rad)
+    c_13[0] = np.cos(triplet.one_with_three.first_rad)
+    c_13[1] = np.sin(triplet.one_with_three.first_rad)
 
     # The common line between image 2 and 3 is computed using the relative angles
     # between the three common lines
-    a = angle_13_in_1_rad - angle_12_in_1_rad
-    b = angle_23_in_2_rad - angle_12_in_2_rad
-    c = angle_23_in_3_rad - angle_13_in_3_rad
+    a, b, c = triplet.angular_differences()
 
     # Check for degenerate geometric configurations
     sin_a = np.sin(a)
@@ -233,13 +188,7 @@ def _get_common_lines_from_angles(
 
 
 def get_transformation_for_second_image(
-    angle_12_in_1_rad: float,
-    angle_12_in_2_rad: float,
-    angle_13_in_1_rad: float,
-    angle_13_in_3_rad: float,
-    angle_23_in_2_rad: float,
-    angle_23_in_3_rad: float,
-    eps: float = 1.0e-6,
+    triplet: CommonLineTriplet, eps: float = 1.0e-6
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Recover the coordinate transformation for image 2 from three common-line pairs.
@@ -255,8 +204,13 @@ def get_transformation_for_second_image(
     when image 2 can be reconstructed from a triplet even if the full orientation
     of image 3 is not recoverable.
 
-    All input common-line angles are oriented (i.e., in the [0, 2pi) interval) angles
-    in radians.
+    Parameters
+    ----------
+    triplet : CommonLineTriplet
+        Three oriented common-line correspondences, in radians, ordered
+        1 -> 2, 1 -> 3, and 2 -> 3.
+    eps : float
+        Numerical tolerance used to reject degenerate or inconsistent triplets.
 
     Returns
     -------
@@ -265,21 +219,13 @@ def get_transformation_for_second_image(
         transformation from image 1 coordinates to image 2 coordinates.
     """
 
-    c_12, _, c_23 = _get_common_lines_from_angles(
-        angle_12_in_1_rad,
-        angle_12_in_2_rad,
-        angle_13_in_1_rad,
-        angle_13_in_3_rad,
-        angle_23_in_2_rad,
-        angle_23_in_3_rad,
-        eps,
-    )
+    c_12, _, c_23 = _get_common_lines_from_angles(triplet, eps)
 
     # Compute the rotation matrix only for image 2
     direct_r2 = _compute_matrix_from_common_lines(
-        theta_a_rad=angle_12_in_2_rad,
+        theta_a_rad=triplet.one_with_two.second_rad,
         c_a=c_12,
-        theta_b_rad=angle_23_in_2_rad,
+        theta_b_rad=triplet.two_with_three.first_rad,
         c_b=c_23,
         eps=eps,
     )

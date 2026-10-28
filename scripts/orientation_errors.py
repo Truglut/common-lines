@@ -41,7 +41,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from common_lines.alignment import compute_transformation_matrices_from_angles
+from common_lines.alignment import (
+    CommonLineAngles,
+    CommonLineTriplet,
+    compute_transformation_matrices,
+)
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.forward import compute_intrinsic_common_line_angles
 from common_lines.procrustes import nearest_rotation
@@ -258,7 +262,19 @@ def evaluate_triplet(i, j, k, first, second, correlation, matrices, symmetry_ops
         row["status"] = "missing_angles"
         return row
     try:
-        branches = compute_transformation_matrices_from_angles(*np.deg2rad(angles))
+        angles_rad = np.deg2rad(angles)
+        triplet = CommonLineTriplet(
+            one_with_two=CommonLineAngles(
+                first_rad=float(angles_rad[0]), second_rad=float(angles_rad[1])
+            ),
+            one_with_three=CommonLineAngles(
+                first_rad=float(angles_rad[2]), second_rad=float(angles_rad[3])
+            ),
+            two_with_three=CommonLineAngles(
+                first_rad=float(angles_rad[4]), second_rad=float(angles_rad[5])
+            ),
+        )
+        branches = compute_transformation_matrices(triplet)
         branch_results = []
         for branch in branches:
             r_i, r_j, r_k = (nearest_rotation(r) for r in branch)

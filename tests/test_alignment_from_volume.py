@@ -2,7 +2,9 @@ import numpy as np
 import pytest
 
 from common_lines.alignment import (
-    compute_transformation_matrices_from_angles,
+    CommonLineAngles,
+    CommonLineTriplet,
+    compute_transformation_matrices,
     mirror_transformation_matrices,
 )
 from common_lines.detection import CommonLineResult, detect_common_lines
@@ -53,13 +55,21 @@ def _solve_detected_triplet(
     angle_13_in_1, angle_13_in_3 = _oriented_pair(detected[1], theta_deg)
     angle_23_in_2, angle_23_in_3 = _oriented_pair(detected[2], theta_deg)
 
-    return compute_transformation_matrices_from_angles(
-        angle_12_in_1_rad=np.deg2rad(angle_12_in_1),
-        angle_12_in_2_rad=np.deg2rad(angle_12_in_2),
-        angle_13_in_1_rad=np.deg2rad(angle_13_in_1),
-        angle_13_in_3_rad=np.deg2rad(angle_13_in_3),
-        angle_23_in_2_rad=np.deg2rad(angle_23_in_2),
-        angle_23_in_3_rad=np.deg2rad(angle_23_in_3),
+    return compute_transformation_matrices(
+        CommonLineTriplet(
+            one_with_two=CommonLineAngles(
+                first_rad=np.deg2rad(angle_12_in_1),
+                second_rad=np.deg2rad(angle_12_in_2),
+            ),
+            one_with_three=CommonLineAngles(
+                first_rad=np.deg2rad(angle_13_in_1),
+                second_rad=np.deg2rad(angle_13_in_3),
+            ),
+            two_with_three=CommonLineAngles(
+                first_rad=np.deg2rad(angle_23_in_2),
+                second_rad=np.deg2rad(angle_23_in_3),
+            ),
+        )
     )
 
 
@@ -274,13 +284,12 @@ def test_detect_common_lines_keeps_compact_array_outputs_for_a_single_pair():
 
 def test_hand_checkable_orthogonal_common_lines_return_both_handednesses():
     """Exact common-line angles give the expected solution and its mirror."""
-    direct, mirrored = compute_transformation_matrices_from_angles(
-        angle_12_in_1_rad=np.deg2rad(0.0),
-        angle_12_in_2_rad=np.deg2rad(0.0),
-        angle_13_in_1_rad=np.deg2rad(90.0),
-        angle_13_in_3_rad=np.deg2rad(0.0),
-        angle_23_in_2_rad=np.deg2rad(90.0),
-        angle_23_in_3_rad=np.deg2rad(90.0),
+    direct, mirrored = compute_transformation_matrices(
+        CommonLineTriplet(
+            one_with_two=CommonLineAngles(first_rad=0.0, second_rad=0.0),
+            one_with_three=CommonLineAngles(first_rad=np.pi / 2, second_rad=0.0),
+            two_with_three=CommonLineAngles(first_rad=np.pi / 2, second_rad=np.pi / 2),
+        )
     )
     expected = (EXPECTED_R1, EXPECTED_R2, EXPECTED_R3)
     expected_mirrored = mirror_transformation_matrices(expected)

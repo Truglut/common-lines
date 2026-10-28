@@ -3,6 +3,7 @@ import pytest
 
 import common_lines.graph_estimation
 from common_lines import pipeline
+from common_lines.alignment import CommonLineTriplet
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -240,14 +241,13 @@ def test_fallback_and_reconstitution_edges_share_i_to_j_convention(monkeypatch):
 
     real_solver = common_lines.graph_estimation.get_transformation_for_second_image
 
-    def solver_with_one_forced_failure(**kwargs):
+    def solver_with_one_forced_failure(*, triplet: CommonLineTriplet):
         # Force only the directed edge 0 -> 1 to use the pairwise fallback.
-        if kwargs["angle_12_in_1_rad"] == np.deg2rad(20.0) and kwargs[
-            "angle_12_in_2_rad"
-        ] == np.deg2rad(70.0):
+        pair = triplet.one_with_two
+        if pair.first_rad == np.deg2rad(20.0) and pair.second_rad == np.deg2rad(70.0):
             raise ValueError("Force fallback for edge 0 -> 1")
 
-        return real_solver(**kwargs)
+        return real_solver(triplet)
 
     monkeypatch.setattr(
         common_lines.graph_estimation,

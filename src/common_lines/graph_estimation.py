@@ -4,6 +4,8 @@ import numpy as np
 
 from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
+    CommonLineAngles,
+    CommonLineTriplet,
     get_transformation_for_second_image,
 )
 from common_lines.procrustes import nearest_rotation
@@ -164,6 +166,11 @@ def estimate_relative_orientation_candidates(
 
     available_mask = np.ones(n_images, dtype=bool)
 
+    def pair_at(i: int, j: int) -> CommonLineAngles:
+        return CommonLineAngles(
+            first_rad=float(angle_1[i, j]), second_rad=float(angle_2[i, j])
+        )
+
     for i, j in itertools.permutations(range(n_images), 2):
         available_mask[:] = True
         available_mask[i] = False
@@ -174,17 +181,17 @@ def estimate_relative_orientation_candidates(
 
         branch_pairs: list[tuple[np.ndarray, np.ndarray]] = []
 
+        pair_ij = pair_at(i, j)
         for k_value in third_indices:
             k = int(k_value)
 
             try:
                 direct_r2, mirrored_r2 = get_transformation_for_second_image(
-                    angle_12_in_1_rad=float(angle_1[i, j]),
-                    angle_12_in_2_rad=float(angle_2[i, j]),
-                    angle_13_in_1_rad=float(angle_1[i, k]),
-                    angle_13_in_3_rad=float(angle_2[i, k]),
-                    angle_23_in_2_rad=float(angle_1[j, k]),
-                    angle_23_in_3_rad=float(angle_2[j, k]),
+                    triplet=CommonLineTriplet(
+                        one_with_two=pair_ij,
+                        one_with_three=pair_at(i, k),
+                        two_with_three=pair_at(j, k),
+                    ),
                 )
             except ValueError:
                 continue

@@ -5,7 +5,9 @@ import pytest
 
 from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
-    compute_transformation_matrices_from_angles,
+    CommonLineAngles,
+    CommonLineTriplet,
+    compute_transformation_matrices,
     get_transformation_for_second_image,
 )
 
@@ -44,16 +46,19 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
     # A simple, non-degenerate configuration. The angles represent oriented
     # common-line directions, including any 180-degree correction introduced
     # when detection finds a reversed profile.
-    angles = {
-        "angle_12_in_1_rad": float(np.deg2rad(20.0)),
-        "angle_12_in_2_rad": float(np.deg2rad(70.0)),
-        "angle_13_in_1_rad": float(np.deg2rad(110.0)),
-        "angle_13_in_3_rad": float(np.deg2rad(35.0)),
-        "angle_23_in_2_rad": float(np.deg2rad(145.0)),
-        "angle_23_in_3_rad": float(np.deg2rad(125.0)),
-    }
+    triplet = CommonLineTriplet(
+        one_with_two=CommonLineAngles(
+            first_rad=np.deg2rad(20.0), second_rad=np.deg2rad(70.0)
+        ),
+        one_with_three=CommonLineAngles(
+            first_rad=np.deg2rad(110.0), second_rad=np.deg2rad(35.0)
+        ),
+        two_with_three=CommonLineAngles(
+            first_rad=np.deg2rad(145.0), second_rad=np.deg2rad(125.0)
+        ),
+    )
 
-    direct, mirrored = compute_transformation_matrices_from_angles(**angles)
+    direct, mirrored = compute_transformation_matrices(triplet)
 
     for R1, R2, R3 in (direct, mirrored):
         _assert_rotation_matrix(R1)
@@ -72,19 +77,20 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
 
 def test_second_image_alignment_uses_radian_inputs_consistently():
     """The pipeline-specific second-image solver must use the same radian convention."""
-    angles = {
-        "angle_12_in_1_rad": np.deg2rad(20.0),
-        "angle_12_in_2_rad": np.deg2rad(70.0),
-        "angle_13_in_1_rad": np.deg2rad(110.0),
-        "angle_13_in_3_rad": np.deg2rad(35.0),
-        "angle_23_in_2_rad": np.deg2rad(145.0),
-        "angle_23_in_3_rad": np.deg2rad(125.0),
-    }
-
-    direct_triplet, mirrored_triplet = compute_transformation_matrices_from_angles(
-        **angles
+    triplet = CommonLineTriplet(
+        one_with_two=CommonLineAngles(
+            first_rad=np.deg2rad(20.0), second_rad=np.deg2rad(70.0)
+        ),
+        one_with_three=CommonLineAngles(
+            first_rad=np.deg2rad(110.0), second_rad=np.deg2rad(35.0)
+        ),
+        two_with_three=CommonLineAngles(
+            first_rad=np.deg2rad(145.0), second_rad=np.deg2rad(125.0)
+        ),
     )
-    direct_r2, mirrored_r2 = get_transformation_for_second_image(**angles)
+
+    direct_triplet, mirrored_triplet = compute_transformation_matrices(triplet)
+    direct_r2, mirrored_r2 = get_transformation_for_second_image(triplet)
 
     _assert_rotation_matrix(direct_r2)
     _assert_rotation_matrix(mirrored_r2)
@@ -96,13 +102,12 @@ def test_recovers_known_configuration_in_both_handednesses():
     # These angles describe three mutually orthogonal projection directions.
     # Both returned branches must preserve that geometry and be related by the
     # global handedness reflection.
-    direct, mirrored = compute_transformation_matrices_from_angles(
-        angle_12_in_1_rad=np.deg2rad(0.0),
-        angle_12_in_2_rad=np.deg2rad(0.0),
-        angle_13_in_1_rad=np.deg2rad(90.0),
-        angle_13_in_3_rad=np.deg2rad(0.0),
-        angle_23_in_2_rad=np.deg2rad(90.0),
-        angle_23_in_3_rad=np.deg2rad(90.0),
+    direct, mirrored = compute_transformation_matrices(
+        CommonLineTriplet(
+            one_with_two=CommonLineAngles(first_rad=0.0, second_rad=0.0),
+            one_with_three=CommonLineAngles(first_rad=np.pi / 2, second_rad=0.0),
+            two_with_three=CommonLineAngles(first_rad=np.pi / 2, second_rad=np.pi / 2),
+        )
     )
 
     for rotations in (direct, mirrored):
@@ -123,11 +128,30 @@ def test_rejects_degenerate_common_lines_in_reference_image():
     # If the two common lines seen in image 1 are parallel, image 1 does not fix
     # a valid 3D frame and the formula would divide by sin(angle_13 - angle_12).
     with pytest.raises(ValueError, match="degenerate|parallel|sin"):
-        compute_transformation_matrices_from_angles(
-            angle_12_in_1_rad=np.deg2rad(30.0),
-            angle_12_in_2_rad=np.deg2rad(10.0),
-            angle_13_in_1_rad=np.deg2rad(30.0),
-            angle_13_in_3_rad=np.deg2rad(80.0),
-            angle_23_in_2_rad=np.deg2rad(120.0),
-            angle_23_in_3_rad=np.deg2rad(45.0),
+        compute_transformation_matrices(
+            CommonLineTriplet(
+                one_with_two=CommonLineAngles(
+                    first_rad=np.deg2rad(30.0), second_rad=np.deg2rad(10.0)
+                ),
+                one_with_three=CommonLineAngles(
+                    first_rad=np.deg2rad(30.0), second_rad=np.deg2rad(80.0)
+                ),
+                two_with_three=CommonLineAngles(
+                    first_rad=np.deg2rad(120.0), second_rad=np.deg2rad(45.0)
+                ),
+            )
         )
+
+
+def test_angular_differences_preserve_image_order_sign_and_full_turns():
+    triplet = CommonLineTriplet(
+        one_with_two=CommonLineAngles(first_rad=1.5 * np.pi, second_rad=0.25 * np.pi),
+        one_with_three=CommonLineAngles(first_rad=-np.pi, second_rad=2.5 * np.pi),
+        two_with_three=CommonLineAngles(first_rad=0.75 * np.pi, second_rad=0.5 * np.pi),
+    )
+
+    # Each difference compares two lines in the same image, ordered 1, 2, 3.
+    # The first and third differences must not be wrapped or made positive.
+    np.testing.assert_allclose(
+        triplet.angular_differences(), (-2.5 * np.pi, 0.5 * np.pi, -2.0 * np.pi)
+    )
