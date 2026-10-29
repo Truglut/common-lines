@@ -8,7 +8,7 @@ from common_lines.alignment import (
     CommonLineTriplet,
 )
 from common_lines.euler import euler_zyz_to_matrix
-from common_lines.euler_alignment import alignment_euler_angles
+from common_lines.euler_alignment import alignment_euler_angles, valid_euler_triplets
 from common_lines.procrustes import nearest_rotation
 
 
@@ -53,7 +53,8 @@ def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
 
 
 def _average_handedness_branches(
-    branch_pairs: list[tuple[np.ndarray, np.ndarray]],
+    all_direct: np.ndarray,
+    all_mirrored: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Average triplet estimates after aligning their handedness branches.
@@ -61,10 +62,10 @@ def _average_handedness_branches(
     The first triplet fixes an arbitrary local hand. For each following triplet,
     the branch closest to the current mean is selected before updating the mean.
     """
-    selected = [np.asarray(branch_pairs[0][0], dtype=np.float64)]
+    selected = [np.asarray(all_direct[0], dtype=np.float64)]
     mean_rotation = selected[0]
 
-    for direct, mirrored in branch_pairs[1:]:
+    for direct, mirrored in zip(all_direct[1:], all_mirrored[1:]):
         direct_distance = np.linalg.norm(direct - mean_rotation, ord="fro")
         mirrored_distance = np.linalg.norm(mirrored - mean_rotation, ord="fro")
 
@@ -141,7 +142,7 @@ def estimate_relative_orientation_candidates(
     n_third
         Maximum number of valid third images used for each ordered pair.
     random_seed
-        Seed used to randomize the order of candidate third images.
+        Seed used to sample valid third images uniformly without replacement.
 
     Returns
     -------
@@ -167,48 +168,42 @@ def estimate_relative_orientation_candidates(
 
     available_mask = np.ones(n_images, dtype=bool)
 
-    def pair_at(i: int, j: int) -> CommonLineAngles:
-        return CommonLineAngles(
-            first_rad=float(angle_1[i, j]), second_rad=float(angle_2[i, j])
-        )
+    def pair_at(i: int | np.ndarray, j: int | np.ndarray) -> CommonLineAngles:
+        return CommonLineAngles(first_rad=angle_1[i, j], second_rad=angle_2[i, j])
 
     for i, j in itertools.permutations(range(n_images), 2):
         available_mask[:] = True
         available_mask[i] = False
         available_mask[j] = False
 
-        third_indices = image_indices[available_mask].copy()
-        rng.shuffle(third_indices)
+        third_indices = image_indices[available_mask]
+        triplets = CommonLineTriplet(
+            one_with_two=pair_at(i, j),
+            one_with_three=pair_at(i, third_indices),
+            two_with_three=pair_at(j, third_indices),
+        )
+        valid_indices = third_indices[valid_euler_triplets(triplets)]
 
-        branch_pairs: list[tuple[np.ndarray, np.ndarray]] = []
-
-        pair_ij = pair_at(i, j)
-        for k_value in third_indices:
-            k = int(k_value)
-            triplet = CommonLineTriplet(
-                one_with_two=pair_ij,
-                one_with_three=pair_at(i, k),
-                two_with_three=pair_at(j, k),
+        if valid_indices.size:
+            selected = rng.choice(
+                valid_indices, size=min(n_third, valid_indices.size), replace=False
             )
-            try:
-                direct, mirrored = alignment_euler_angles(triplet)
-                direct_r2 = euler_zyz_to_matrix(direct)
-                mirrored_r2 = euler_zyz_to_matrix(mirrored)
-            except ValueError:
-                continue
-
-            # Image i is the reference image for this triplet, so R2 transforms
-            # coordinates from image i to image j.
-            branch_pairs.append((direct_r2, mirrored_r2))
-            if len(branch_pairs) == n_third:
-                break
-
-        if not branch_pairs:
-            fallback_pair = _estimate_pairwise_fallback(angle_1[i, j], angle_2[i, j])
-            branch_pairs.append(fallback_pair)
+            selected_triplets = CommonLineTriplet(
+                one_with_two=triplets.one_with_two,
+                one_with_three=pair_at(i, selected),
+                two_with_three=pair_at(j, selected),
+            )
+            # Filtering and solving share the same geometry checks. A solver
+            # failure here is unexpected and must propagate to the caller.
+            direct, mirrored = alignment_euler_angles(selected_triplets)
+            direct_mean, mirrored_mean = _average_handedness_branches(
+                euler_zyz_to_matrix(direct), euler_zyz_to_matrix(mirrored)
+            )
+        else:
+            direct_mean, mirrored_mean = _estimate_pairwise_fallback(
+                angle_1[i, j], angle_2[i, j]
+            )
             used_fallback[i, j] = True
-
-        direct_mean, mirrored_mean = _average_handedness_branches(branch_pairs)
 
         candidates[i, j, 0] = direct_mean
         candidates[i, j, 1] = mirrored_mean
