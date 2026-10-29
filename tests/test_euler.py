@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from common_lines.euler import euler_zyz_to_matrix
+from common_lines.euler import EulerAngles, euler_zyz_to_matrix
 
 
 def test_matches_independent_rotation_composition() -> None:
@@ -19,7 +19,7 @@ def test_matches_independent_rotation_composition() -> None:
         [0.3, np.pi - 1e-12, -0.7],
     ]
 
-    result = euler_zyz_to_matrix(*angles.T)
+    result = euler_zyz_to_matrix(EulerAngles(*angles.T))
     # SciPy's intrinsic ZYZ rotation is active; its transpose changes coordinates.
     expected = Rotation.from_euler("ZYZ", angles).as_matrix().swapaxes(-1, -2)
     np.testing.assert_allclose(result, expected, rtol=0, atol=1e-15)
@@ -34,9 +34,7 @@ def test_matches_independent_rotation_composition() -> None:
 
 def test_viewing_direction_is_independent_of_in_plane_rotation() -> None:
     rot, tilt = 0.73, 1.19
-    matrices = euler_zyz_to_matrix(
-        np.array(rot), np.array(tilt), np.array([-1.2, 0.0, 0.8])
-    )
+    matrices = euler_zyz_to_matrix(EulerAngles(rot, tilt, np.array([-1.2, 0.0, 0.8])))
     direction = np.array(
         [np.sin(tilt) * np.cos(rot), np.sin(tilt) * np.sin(rot), np.cos(tilt)]
     )
@@ -54,8 +52,8 @@ def test_equivalent_angles_at_poles() -> None:
     # At tilt=0 only rot+psi matters; at tilt=pi only rot-psi matters.
     equivalent = angles + [[0.6, 0.0, -0.6], [0.6, 0.0, 0.6]]
     np.testing.assert_allclose(
-        euler_zyz_to_matrix(*equivalent.T),
-        euler_zyz_to_matrix(*angles.T),
+        euler_zyz_to_matrix(EulerAngles(*equivalent.T)),
+        euler_zyz_to_matrix(EulerAngles(*angles.T)),
         rtol=0,
         atol=1e-15,
     )
@@ -67,8 +65,8 @@ def test_broadcasting_preserves_dtype_and_reuses_output_buffer() -> None:
     psi = np.array(-0.2, dtype=np.float32)
     out = np.full((2, 3, 3, 3), np.nan, dtype=np.float32)
 
-    assert euler_zyz_to_matrix(rot, tilt, psi, out=out) is out
-    allocated = euler_zyz_to_matrix(rot, tilt, psi)
+    assert euler_zyz_to_matrix(EulerAngles(rot, tilt, psi), out=out) is out
+    allocated = euler_zyz_to_matrix(EulerAngles(rot, tilt, psi))
     assert allocated.shape == out.shape
     assert allocated.dtype == np.float32
     np.testing.assert_array_equal(out, allocated)
@@ -81,8 +79,10 @@ def test_broadcasting_preserves_dtype_and_reuses_output_buffer() -> None:
 def test_rejects_invalid_array_contracts() -> None:
     angles = np.array([0.3, 0.7, -0.2])
     with pytest.raises(TypeError, match="real floating-point"):
-        euler_zyz_to_matrix(*angles.astype(np.int64))
+        euler_zyz_to_matrix(EulerAngles(*angles.astype(np.int64)))
     with pytest.raises(RuntimeError, match="Invalid output array"):
-        euler_zyz_to_matrix(*angles, out=np.empty((2, 3, 3)))
+        euler_zyz_to_matrix(EulerAngles(*angles), out=np.empty((2, 3, 3)))
     with pytest.raises(RuntimeError, match="Invalid output array"):
-        euler_zyz_to_matrix(*angles, out=np.empty((3, 3), dtype=np.float32))
+        euler_zyz_to_matrix(
+            EulerAngles(*angles), out=np.empty((3, 3), dtype=np.float32)
+        )

@@ -1,26 +1,32 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 
+@dataclass
+class EulerAngles:
+    rot: np.ndarray | float
+    tilt: np.ndarray | float
+    psi: np.ndarray | float
+
+
 def euler_zyz_to_matrix(
-    rot: np.ndarray, tilt: np.ndarray, psi: np.ndarray, out: np.ndarray | None = None
+    angles: EulerAngles, out: np.ndarray | None = None
 ) -> np.ndarray:
     """
     Convert ZYZ Euler angles to rotation matrices. Input angles are given in
-    radians as floating-point arrays and may have any broadcast-compatible shapes.
+    radians as floating-point scalars or broadcast-compatible arrays.
 
     Parameters
     ----------
-    rot : np.ndarray
-        First rotation angle about the z axis, in radians.
-    tilt : np.ndarray
-        Rotation angle about the y axis, in radians.
-    psi : np.ndarray
-        Final rotation angle about the z axis, in radians.
+    angles : EulerAngles
+        First z rotation (rot), intermediate y rotation (tilt), and final
+        z rotation (psi), in radians.
     out : np.ndarray, optional
         Array in which to store the resulting matrices. It must have
-        shape ``broadcast_shape + (3, 3)`` and the same dtype as ``rot``.
+        shape ``broadcast_shape + (3, 3)`` and the same dtype as ``angles.rot``.
 
     Returns
     -------
@@ -36,6 +42,10 @@ def euler_zyz_to_matrix(
     The projection direction is given by the third row of the rotation matrix,
     ``euler_zyz_to_matrix(...)[..., 2, :]``.
     """
+    rot = np.asarray(angles.rot)
+    tilt = np.asarray(angles.tilt)
+    psi = np.asarray(angles.psi)
+
     if any(not np.issubdtype(angle.dtype, np.floating) for angle in (rot, tilt, psi)):
         raise TypeError("Euler angle arrays must have real floating-point dtypes")
 

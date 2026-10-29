@@ -6,8 +6,9 @@ from common_lines.alignment import (
     HANDEDNESS_REFLECTION,
     CommonLineAngles,
     CommonLineTriplet,
-    get_transformation_for_second_image,
 )
+from common_lines.euler import euler_zyz_to_matrix
+from common_lines.euler_alignment import alignment_euler_angles
 from common_lines.procrustes import nearest_rotation
 
 
@@ -184,15 +185,15 @@ def estimate_relative_orientation_candidates(
         pair_ij = pair_at(i, j)
         for k_value in third_indices:
             k = int(k_value)
-
+            triplet = CommonLineTriplet(
+                one_with_two=pair_ij,
+                one_with_three=pair_at(i, k),
+                two_with_three=pair_at(j, k),
+            )
             try:
-                direct_r2, mirrored_r2 = get_transformation_for_second_image(
-                    triplet=CommonLineTriplet(
-                        one_with_two=pair_ij,
-                        one_with_three=pair_at(i, k),
-                        two_with_three=pair_at(j, k),
-                    ),
-                )
+                direct, mirrored = alignment_euler_angles(triplet)
+                direct_r2 = euler_zyz_to_matrix(direct)
+                mirrored_r2 = euler_zyz_to_matrix(mirrored)
             except ValueError:
                 continue
 

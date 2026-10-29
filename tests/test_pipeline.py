@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 import common_lines.graph_estimation
 from common_lines import pipeline
-from common_lines.alignment import CommonLineTriplet
+from common_lines.forward import compute_intrinsic_common_line_angles
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -21,9 +22,17 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
     theta_1_deg = 25.0
     theta_2_deg = 100.0
 
-    direct, mirrored = common_lines.graph_estimation._estimate_pairwise_fallback(
-        np.deg2rad(theta_1_deg), np.deg2rad(theta_2_deg)
+    # With only two images there is no third view for reconstitution.
+    candidates, used_fallback = (
+        common_lines.graph_estimation.estimate_relative_orientation_candidates(
+            np.deg2rad([[0.0, theta_1_deg], [theta_2_deg, 0.0]]),
+            np.deg2rad([[0.0, theta_2_deg], [theta_1_deg, 0.0]]),
+            n_third=1,
+            random_seed=0,
+        )
     )
+    np.testing.assert_array_equal(used_fallback, ~np.eye(2, dtype=bool))
+    direct, mirrored = candidates[0, 1]
 
     _assert_rotation_matrix(direct)
     assert np.allclose(mirrored, direct)
@@ -45,21 +54,10 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
     assert np.allclose(direct, expected, atol=1.0e-12)
 
 
-def _patch_pipeline_to_force_fallback(monkeypatch):
-    angle_1 = np.array(
-        [
-            [0.0, 10.0, 25.0],
-            [40.0, 0.0, 60.0],
-            [80.0, 110.0, 0.0],
-        ]
-    )
-    angle_2 = np.array(
-        [
-            [0.0, 40.0, 80.0],
-            [10.0, 0.0, 110.0],
-            [25.0, 60.0, 0.0],
-        ]
-    )
+def _patch_detected_common_lines(
+    monkeypatch: pytest.MonkeyPatch, angle_1: np.ndarray, angle_2: np.ndarray
+) -> None:
+    """Supply detected angles in degrees while running real graph estimation."""
 
     class FakeCommonLines:
         def oriented_angles(
@@ -79,14 +77,17 @@ def _patch_pipeline_to_force_fallback(monkeypatch):
         lambda sinograms, allow_reversed, block_size: FakeCommonLines(),
     )
 
-    def fail_triplet_estimation(**kwargs):
-        raise ValueError("No valid triplet geometry")
 
-    monkeypatch.setattr(
-        common_lines.graph_estimation,
-        "get_transformation_for_second_image",
-        fail_triplet_estimation,
+def _patch_pipeline_to_force_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[np.ndarray, np.ndarray]:
+    # Every common line in an image has the same direction, so all triplets
+    # are degenerate. Distinct image angles exercise nonidentity fallbacks.
+    angle_1 = np.array(
+        [[0.0, 10.0, 10.0], [40.0, 0.0, 40.0], [80.0, 80.0, 0.0]]
     )
+    angle_2 = angle_1.T.copy()
+    _patch_detected_common_lines(monkeypatch, angle_1, angle_2)
     return angle_1, angle_2
 
 
@@ -122,39 +123,17 @@ def test_pipeline_diagnostics_report_fallback_edges(monkeypatch):
             )
 
 
-def test_simple_api_returns_only_graph(monkeypatch):
-    expected_graph = np.broadcast_to(np.eye(3), (3, 3, 3, 3)).copy()
-    detailed = pipeline.OrientationEstimationResult(
-        graph=expected_graph,
-        used_fallback=np.zeros((3, 3), dtype=bool),
-        handedness_reference=(0, 1),
+def test_simple_api_returns_only_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_pipeline_to_force_fallback(monkeypatch)
+    images = np.zeros((3, 5, 5))
+    theta = np.array([0.0, 90.0])
+    detailed = pipeline.build_relative_orientations_graph_with_diagnostics(
+        images, theta=theta
     )
-
-    monkeypatch.setattr(
-        pipeline,
-        "build_relative_orientations_graph_with_diagnostics",
-        lambda *args, **kwargs: detailed,
-    )
-
-    graph = pipeline.build_relative_orientations_graph(np.zeros((3, 5, 5)))
+    graph = pipeline.build_relative_orientations_graph(images, theta=theta)
 
     assert isinstance(graph, np.ndarray)
-    assert graph is expected_graph
-
-
-def test_automatic_handedness_reference_avoids_fallback_edge():
-    used_fallback = np.array(
-        [
-            [False, True, False],
-            [True, False, False],
-            [False, False, False],
-        ]
-    )
-
-    reference = pipeline._resolve_handedness_reference(used_fallback, requested=None)
-
-    assert reference == (0, 2)
-    assert not used_fallback[reference]
+    np.testing.assert_array_equal(graph, detailed.graph)
 
 
 def test_orientation_graph_uses_i_to_j_coordinate_convention():
@@ -220,76 +199,51 @@ def test_orientation_graph_uses_i_to_j_coordinate_convention():
             assert np.allclose(graph[i, j], expected, atol=1.0e-12)
 
 
-def test_fallback_and_reconstitution_edges_share_i_to_j_convention(monkeypatch):
+@pytest.mark.parametrize("random_seed", [0, 4])
+def test_fallback_and_reconstitution_edges_share_i_to_j_convention(
+    monkeypatch: pytest.MonkeyPatch, random_seed: int
+) -> None:
     """Fallback and reconstructed edges must use the same graph convention."""
-
-    # Non-degenerate common-line geometry already used by the alignment tests.
-    angle_1 = np.array(
-        [
-            [0.0, 20.0, 110.0],
-            [70.0, 0.0, 145.0],
-            [35.0, 125.0, 0.0],
-        ]
+    frames = Rotation.from_euler(
+        "ZYZ", [[0, 0, 0], [0.3, 0.7, -0.2], [0.8, 1.2, 0.4], [-0.8, 0.5, 0.3]]
+    ).as_matrix()
+    first, second = compute_intrinsic_common_line_angles(
+        frames[:, None], frames[None, :]
     )
-    angle_2 = np.array(
-        [
-            [0.0, 70.0, 35.0],
-            [20.0, 0.0, 125.0],
-            [110.0, 145.0, 0.0],
-        ]
-    )
+    # Make all lines in image 0 parallel. Edges involving image 0 must fall
+    # back, while images 1, 2, 3 still have a valid reconstruction triplet.
+    first[0, 1:] = np.deg2rad(20.0)
+    second[1:, 0] = np.deg2rad(20.0)
+    angle_1, angle_2 = np.rad2deg(first), np.rad2deg(second)
+    _patch_detected_common_lines(monkeypatch, angle_1, angle_2)
 
-    real_solver = common_lines.graph_estimation.get_transformation_for_second_image
-
-    def solver_with_one_forced_failure(*, triplet: CommonLineTriplet):
-        # Force only the directed edge 0 -> 1 to use the pairwise fallback.
-        pair = triplet.one_with_two
-        if pair.first_rad == np.deg2rad(20.0) and pair.second_rad == np.deg2rad(70.0):
-            raise ValueError("Force fallback for edge 0 -> 1")
-
-        return real_solver(triplet)
-
-    monkeypatch.setattr(
-        common_lines.graph_estimation,
-        "get_transformation_for_second_image",
-        solver_with_one_forced_failure,
+    result = pipeline.build_relative_orientations_graph_with_diagnostics(
+        np.zeros((4, 5, 5)),
+        theta=np.array([0.0, 90.0]),
+        n_third=2,
+        random_seed=random_seed,
     )
 
-    candidates, used_fallback = (
-        common_lines.graph_estimation.estimate_relative_orientation_candidates(
-            np.deg2rad(angle_1),
-            np.deg2rad(angle_2),
-            n_third=1,
-            random_seed=0,
-        )
-    )
+    expected_fallback = np.zeros((4, 4), dtype=bool)
+    expected_fallback[0, 1:] = True
+    expected_fallback[1:, 0] = True
+    np.testing.assert_array_equal(result.used_fallback, expected_fallback)
+    assert result.handedness_reference == (1, 2)
+    assert not result.used_fallback[result.handedness_reference]
 
-    expected_fallback = np.zeros((3, 3), dtype=bool)
-    expected_fallback[0, 1] = True
-    assert np.array_equal(used_fallback, expected_fallback)
-
-    reference_pair = pipeline._resolve_handedness_reference(
-        used_fallback,
-        requested=None,
-    )
-    assert not used_fallback[reference_pair]
-
-    graph = common_lines.graph_estimation.select_consistent_handedness(
-        candidates,
-        reference_pair=reference_pair,
-    )
-
-    for i in range(3):
-        for j in range(3):
+    for i in range(4):
+        for j in range(4):
+            _assert_rotation_matrix(result.graph[i, j])
             if i == j:
+                np.testing.assert_allclose(result.graph[i, j], np.eye(3))
                 continue
 
             common_line_i = _image_plane_direction(angle_1[i, j])
             common_line_j = _image_plane_direction(angle_2[i, j])
-
-            assert np.allclose(
-                graph[i, j] @ common_line_i,
+            np.testing.assert_allclose(
+                result.graph[i, j] @ common_line_i,
                 common_line_j,
+                rtol=0,
                 atol=1.0e-12,
             )
 

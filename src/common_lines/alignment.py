@@ -13,9 +13,9 @@ HandednessPair = tuple[RotationTriplet, RotationTriplet]
 class CommonLineAngles:
     """One oriented common-line correspondence, expressed in radians.
 
-    ``source_rad`` and ``target_rad`` describe the same oriented 3D direction
-    in the source and target image planes, respectively. Any detector-reversal
-    correction must already be included. Source and target refer to the ordered
+    ``first_rad`` and ``second_rad`` describe the same oriented 3D direction
+    in the first and second image planes, respectively. Any detector-reversal
+    correction must already be included. First and second refer to the ordered
     endpoints of this pair, not to fixed image numbers in a triplet.
 
     Each field is a scalar; batched alignment is not currently supported.
@@ -44,12 +44,12 @@ class CommonLineTriplet:
 
         Returns
         -------
-        a, b, c : float
+        delta_1, delta_2, delta_3 : float
             Differences in radians, using these subtraction orders:
 
-            * ``a``: line 1-3 minus line 1-2, both measured in image 1.
-            * ``b``: line 2-3 minus line 1-2, both measured in image 2.
-            * ``c``: line 2-3 minus line 1-3, both measured in image 3.
+            * ``delta_1``: line 1-3 minus line 1-2, both measured in image 1.
+            * ``delta_2``: line 2-3 minus line 1-2, both measured in image 2.
+            * ``delta_3``: line 2-3 minus line 1-3, both measured in image 3.
 
         Notes
         -----
