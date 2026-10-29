@@ -41,13 +41,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from common_lines.alignment import (
-    CommonLineAngles,
-    CommonLineTriplet,
+from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
 )
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.forward import compute_intrinsic_common_line_angles
+from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 from common_lines.procrustes import nearest_rotation
 from common_lines.radon import batch_common_line_sinograms
 

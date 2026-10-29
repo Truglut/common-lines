@@ -2,14 +2,17 @@ import itertools
 
 import numpy as np
 
-from common_lines.alignment import (
+from common_lines.euler import euler_zyz_to_matrix
+from common_lines.procrustes import nearest_rotation
+from common_lines.reconstitution.euler import (
+    alignment_euler_angles,
+    valid_euler_triplets,
+)
+from common_lines.reconstitution.triplets import (
     HANDEDNESS_REFLECTION,
     CommonLineAngles,
     CommonLineTriplet,
 )
-from common_lines.euler import euler_zyz_to_matrix
-from common_lines.euler_alignment import alignment_euler_angles, valid_euler_triplets
-from common_lines.procrustes import nearest_rotation
 
 
 def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:

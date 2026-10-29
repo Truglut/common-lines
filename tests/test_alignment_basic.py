@@ -3,12 +3,14 @@
 import numpy as np
 import pytest
 
-from common_lines.alignment import (
+from common_lines.reconstitution.matrix import (
+    compute_transformation_matrices,
+    get_transformation_for_second_image,
+)
+from common_lines.reconstitution.triplets import (
     HANDEDNESS_REFLECTION,
     CommonLineAngles,
     CommonLineTriplet,
-    compute_transformation_matrices,
-    get_transformation_for_second_image,
 )
 
 

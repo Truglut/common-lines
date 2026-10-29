@@ -5,15 +5,17 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from common_lines import graph_estimation
-from common_lines.alignment import (
+from common_lines.euler import euler_zyz_to_matrix
+from common_lines.forward import compute_intrinsic_common_line_angles
+from common_lines.reconstitution.euler import alignment_euler_angles
+from common_lines.reconstitution.matrix import (
+    get_transformation_for_second_image,
+)
+from common_lines.reconstitution.triplets import (
     HANDEDNESS_REFLECTION,
     CommonLineAngles,
     CommonLineTriplet,
-    get_transformation_for_second_image,
 )
-from common_lines.euler import euler_zyz_to_matrix
-from common_lines.euler_alignment import alignment_euler_angles
-from common_lines.forward import compute_intrinsic_common_line_angles
 
 
 def test_candidates_recover_known_geometry_and_match_matrix_solver() -> None:

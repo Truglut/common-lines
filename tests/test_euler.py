@@ -5,6 +5,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from common_lines.euler import EulerAngles, euler_zyz_to_matrix
+from common_lines.reconstitution.triplets import HANDEDNESS_REFLECTION
 
 
 def test_matches_independent_rotation_composition() -> None:
@@ -86,3 +87,22 @@ def test_rejects_invalid_array_contracts() -> None:
         euler_zyz_to_matrix(
             EulerAngles(*angles), out=np.empty((3, 3), dtype=np.float32)
         )
+
+
+def test_opposite_tilt_or_adding_pi_equals_handedness_reflection() -> None:
+    rot = np.deg2rad(np.array([40.0, 80.0, 234.0]))
+    tilt = np.deg2rad(np.array([10.0, 35.0, 72.0]))
+    psi = np.deg2rad(np.array([0.0, 27.0, -43.0]))
+
+    euler = EulerAngles(rot, tilt, psi)
+
+    direct_matrix = euler_zyz_to_matrix(euler)
+    manually_mirrored = HANDEDNESS_REFLECTION @ direct_matrix @ HANDEDNESS_REFLECTION
+
+    opposite_tilt_euler = EulerAngles(rot, -tilt, psi)
+    opposite_tilt_matrix = euler_zyz_to_matrix(opposite_tilt_euler)
+    np.testing.assert_allclose(opposite_tilt_matrix, manually_mirrored, atol=1.0e-8)
+
+    add_pi_euler = EulerAngles(rot + np.pi, tilt, psi + np.pi)
+    add_pi_matrix = euler_zyz_to_matrix(add_pi_euler)
+    np.testing.assert_allclose(add_pi_matrix, manually_mirrored, atol=1.0e-8)

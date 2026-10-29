@@ -5,17 +5,13 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from common_lines import graph_estimation
-from common_lines.alignment import (
-    HANDEDNESS_REFLECTION,
-    BoolArray,
-    CommonLineAngles,
-    CommonLineTriplet,
-    FloatArray,
+from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
     get_transformation_for_second_image,
 )
 from common_lines.euler import EulerAngles, euler_zyz_to_matrix
-from common_lines.euler_alignment import (
+from common_lines.reconstitution.triplets import HANDEDNESS_REFLECTION, BoolArray, CommonLineAngles, CommonLineTriplet, FloatArray
+from common_lines.reconstitution.euler import (
     EulerPair,
     alignment_euler_angles,
     valid_euler_triplets,

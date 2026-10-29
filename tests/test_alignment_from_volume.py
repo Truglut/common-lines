@@ -1,13 +1,12 @@
 import numpy as np
 import pytest
 
-from common_lines.alignment import (
-    CommonLineAngles,
-    CommonLineTriplet,
+from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
     mirror_transformation_matrices,
 )
 from common_lines.detection import CommonLineResult, detect_common_lines
+from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 from common_lines.radon import batch_common_line_sinograms
 
 THETA_DEG = np.arange(0.0, 180.0, 1.0)

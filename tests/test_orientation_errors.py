@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from common_lines.alignment import HANDEDNESS_REFLECTION
+from common_lines.reconstitution.triplets import HANDEDNESS_REFLECTION
 from scripts.orientation_errors import (
     evaluate_triplet,
     ground_truth_angles,

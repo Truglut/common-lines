@@ -2,15 +2,14 @@
 
 import numpy as np
 
-from common_lines.alignment import (
-    CommonLineAngles,
-    CommonLineTriplet,
+from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
 )
 from common_lines.forward import (
     compute_intrinsic_common_line_angles,
     find_common_lines,
 )
+from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 
 
 def _rotation(axis: str, degrees: float) -> np.ndarray:
