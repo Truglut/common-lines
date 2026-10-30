@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from common_lines.reconstitution.triplets import HANDEDNESS_REFLECTION
 from scripts.orientation_errors import (

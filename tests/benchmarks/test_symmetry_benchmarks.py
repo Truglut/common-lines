@@ -1,8 +1,13 @@
 """Symmetry-aware local and graph validation: exact SO(3) gauge relationships."""
+import sys
+from pathlib import Path
 
 import numpy as np
 
 from common_lines import mirror_relative_orientations_graph
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from scripts.detection_errors import symmetry_operators
 from scripts.orientation_errors import (
     evaluate_triplet,

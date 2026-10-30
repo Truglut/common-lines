@@ -7,7 +7,7 @@ from scipy.spatial.transform import Rotation
 import common_lines.graph_estimation
 from common_lines import pipeline
 from common_lines.forward import compute_intrinsic_common_line_angles
-from src.common_lines.graph_estimation import ReconstitutionMethod
+from common_lines.graph_estimation import ReconstitutionMethod
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
