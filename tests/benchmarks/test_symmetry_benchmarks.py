@@ -1,4 +1,5 @@
 """Symmetry-aware local and graph validation: exact SO(3) gauge relationships."""
+
 import sys
 from pathlib import Path
 

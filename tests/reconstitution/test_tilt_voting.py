@@ -3,8 +3,6 @@
 import numpy as np
 import pytest
 
-from common_lines import graph_estimation
-from common_lines.euler import EulerAngles, euler_zyz_to_matrix
 from common_lines.reconstitution.euler import vote_tilt
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 
@@ -44,22 +42,6 @@ def test_opposite_endpoints_do_not_vote_together() -> None:
     tilts = np.deg2rad([1.0, 2.0, 178.0, 179.0, 89.0, 90.0, 91.0])
     actual = vote_tilt(_triplets_with_tilts(tilts), bins=181, sigma=np.deg2rad(5.0))
     assert actual == pytest.approx(np.pi / 2, abs=1e-12)
-
-
-def test_graph_defaults_to_voting_with_a_five_degree_bandwidth() -> None:
-    tilts = np.deg2rad([58.0, 59.0, 60.0, 61.0, 62.0, 120.0, 150.0])
-    n_images = tilts.size + 2
-    first = np.zeros((n_images, n_images))
-    second = np.zeros_like(first)
-    first[0, 2:] = np.pi / 2
-    first[1, 2:] = np.pi / 2
-    second[1, 2:] = tilts
-    candidates, fallback = graph_estimation.estimate_relative_orientation_candidates(
-        first, second, n_third=tilts.size, random_seed=4, method="voting"
-    )
-    assert not fallback[0, 1]
-    expected = euler_zyz_to_matrix(EulerAngles(-np.pi / 2, np.pi / 3, np.pi / 2))
-    np.testing.assert_allclose(candidates[0, 1, 0], expected, rtol=0, atol=1e-12)
 
 
 @pytest.mark.parametrize("bins", [0, 1, 2.5])

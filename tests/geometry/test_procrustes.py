@@ -3,7 +3,7 @@ import pytest
 from numpy.testing import assert_allclose
 from scipy.spatial.transform import Rotation
 
-from common_lines.procrustes import nearest_rotation
+from common_lines.geometry.procrustes import nearest_rotation
 
 
 def assert_is_rotation(matrix: np.ndarray, atol: float = 1e-12) -> None:

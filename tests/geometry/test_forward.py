@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from common_lines.forward import (
+from common_lines.geometry.forward import (
     compute_intrinsic_common_line_angles,
     find_common_lines,
 )
