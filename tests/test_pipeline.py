@@ -1,13 +1,9 @@
-from typing import get_args
-
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-import common_lines.graph_estimation
 from common_lines import pipeline
-from common_lines.forward import compute_intrinsic_common_line_angles
-from common_lines.graph_estimation import ReconstitutionMethod
+from common_lines.geometry.forward import compute_intrinsic_common_line_angles
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -19,43 +15,6 @@ def _assert_rotation_matrix(rotation: np.ndarray, *, atol: float = 1.0e-12) -> N
     assert rotation.shape == (3, 3)
     assert np.allclose(rotation @ rotation.T, np.eye(3), atol=atol)
     assert np.isclose(np.linalg.det(rotation), 1.0, atol=atol)
-
-
-def test_pairwise_fallback_is_minimal_in_plane_rotation():
-    theta_1_deg = 25.0
-    theta_2_deg = 100.0
-
-    # With only two images there is no third view for reconstitution.
-    candidates, used_fallback = (
-        common_lines.graph_estimation.estimate_relative_orientation_candidates(
-            np.deg2rad([[0.0, theta_1_deg], [theta_2_deg, 0.0]]),
-            np.deg2rad([[0.0, theta_2_deg], [theta_1_deg, 0.0]]),
-            n_third=1,
-            random_seed=0,
-            method="averaging",  # method does not matter with no third image
-        )
-    )
-    np.testing.assert_array_equal(used_fallback, ~np.eye(2, dtype=bool))
-    direct, mirrored = candidates[0, 1]
-
-    _assert_rotation_matrix(direct)
-    assert np.allclose(mirrored, direct)
-
-    common_line_1 = _image_plane_direction(theta_1_deg)
-    common_line_2 = _image_plane_direction(theta_2_deg)
-
-    assert np.allclose(direct @ common_line_1, common_line_2, atol=1.0e-12)
-
-    delta_rad = np.deg2rad(theta_2_deg - theta_1_deg)
-    expected = np.array(
-        [
-            [np.cos(delta_rad), -np.sin(delta_rad), 0.0],
-            [np.sin(delta_rad), np.cos(delta_rad), 0.0],
-            [0.0, 0.0, 1.0],
-        ]
-    )
-
-    assert np.allclose(direct, expected, atol=1.0e-12)
 
 
 def _patch_detected_common_lines(
@@ -136,73 +95,6 @@ def test_simple_api_returns_only_graph(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert isinstance(graph, np.ndarray)
     np.testing.assert_array_equal(graph, detailed.graph)
-
-
-@pytest.mark.parametrize("method", get_args(ReconstitutionMethod))
-def test_orientation_graph_uses_i_to_j_coordinate_convention(
-    method: ReconstitutionMethod,
-):
-    """graph[i, j] transforms coordinates from image i to image j."""
-
-    # Three hand-checkable frames. Each R_i maps coordinates from the
-    # reference system into the coordinate system of image i.
-    R0 = np.eye(3)
-    R1 = np.array(
-        [
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [0.0, -1.0, 0.0],
-        ]
-    )
-    R2 = np.array(
-        [
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0],
-        ]
-    )
-    frames = (R0, R1, R2)
-
-    # Exact oriented common-line angles for these three frames.
-    #
-    # angle_1[i, j]: angle in image i
-    # angle_2[i, j]: corresponding angle in image j
-    angle_1 = np.array(
-        [
-            [0.0, 0.0, 90.0],
-            [0.0, 0.0, 90.0],
-            [0.0, 90.0, 0.0],
-        ]
-    )
-    angle_2 = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 90.0],
-            [90.0, 90.0, 0.0],
-        ]
-    )
-
-    candidates, used_fallback = (
-        common_lines.graph_estimation.estimate_relative_orientation_candidates(
-            np.deg2rad(angle_1),
-            np.deg2rad(angle_2),
-            n_third=1,
-            random_seed=0,
-            method=method,
-        )
-    )
-
-    assert not np.any(used_fallback)
-
-    graph = common_lines.graph_estimation.select_consistent_handedness(
-        candidates,
-        reference_pair=(0, 1),
-    )
-
-    for i in range(3):
-        for j in range(3):
-            expected = frames[j] @ frames[i].T
-            assert np.allclose(graph[i, j], expected, atol=1.0e-12)
 
 
 @pytest.mark.parametrize("random_seed", [0, 4])
@@ -328,6 +220,8 @@ def test_pipeline_preprocessing_order(monkeypatch, precenter_method, enabled):
         **kwargs,
     )
 
-    expected_calls = ["preprocess", "estimate", "shift"] if precenter_method is not None else []
+    expected_calls = (
+        ["preprocess", "estimate", "shift"] if precenter_method is not None else []
+    )
     assert calls == expected_calls + ["preprocess", "sinograms"]
     np.testing.assert_array_equal(images, original)

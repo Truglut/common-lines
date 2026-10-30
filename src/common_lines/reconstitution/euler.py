@@ -1,6 +1,7 @@
 import numpy as np
 
-from ..euler import EulerAngles
+from common_lines.geometry.euler import EulerAngles
+
 from .triplets import BoolArray, CommonLineTriplet, FloatArray, broadcast_triplet
 
 EulerPair = tuple[EulerAngles, EulerAngles]

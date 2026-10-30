@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from common_lines.euler import EulerAngles, euler_zyz_to_matrix
+from common_lines.geometry.euler import EulerAngles, euler_zyz_to_matrix
 from common_lines.reconstitution.triplets import HANDEDNESS_REFLECTION
 
 
