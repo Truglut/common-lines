@@ -1,12 +1,15 @@
 import itertools
+from typing import Literal
 
 import numpy as np
 
-from common_lines.euler import euler_zyz_to_matrix
+from common_lines.euler import EulerAngles, euler_zyz_to_matrix
 from common_lines.procrustes import nearest_rotation
 from common_lines.reconstitution.euler import (
     alignment_euler_angles,
+    rot_psi_from_angle_pair,
     valid_euler_triplets,
+    vote_tilt,
 )
 from common_lines.reconstitution.triplets import (
     HANDEDNESS_REFLECTION,
@@ -130,6 +133,7 @@ def estimate_relative_orientation_candidates(
     *,
     n_third: int,
     random_seed: int | None,
+    method: Literal["averaging", "voting"] = "averaging",
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Estimate both handedness candidates for every ordered image pair.
@@ -146,6 +150,10 @@ def estimate_relative_orientation_candidates(
         Maximum number of valid third images used for each ordered pair.
     random_seed
         Seed used to sample valid third images uniformly without replacement.
+    method
+        "voting" (default) estimates a Gaussian tilt mode with a five-degree
+        bandwidth and continuous refinement. "averaging" averages rotations
+        after aligning their handedness branches.
 
     Returns
     -------
@@ -158,6 +166,11 @@ def estimate_relative_orientation_candidates(
         image pair, whether a fallback was used due to not finding a valid third
         image for the angular reconstitution algorithm.
     """
+    if method not in ("averaging", "voting"):
+        raise ValueError("method must be 'averaging' or 'voting'.")
+    if n_third < 1:
+        raise ValueError("n_third must be at least 1.")
+
     n_images = angle_1.shape[0]
     image_indices = np.arange(n_images)
     rng = np.random.default_rng(random_seed)
@@ -196,12 +209,27 @@ def estimate_relative_orientation_candidates(
                 one_with_three=pair_at(i, selected),
                 two_with_three=pair_at(j, selected),
             )
-            # Filtering and solving share the same geometry checks. A solver
-            # failure here is unexpected and must propagate to the caller.
-            direct, mirrored = alignment_euler_angles(selected_triplets)
-            direct_mean, mirrored_mean = _average_handedness_branches(
-                euler_zyz_to_matrix(direct), euler_zyz_to_matrix(mirrored)
-            )
+
+            if method == "averaging":
+                # Filtering and solving share the same geometry checks. A solver
+                # failure here is unexpected and must propagate to the caller.
+                direct, mirrored = alignment_euler_angles(selected_triplets)
+                direct_mean, mirrored_mean = _average_handedness_branches(
+                    euler_zyz_to_matrix(direct), euler_zyz_to_matrix(mirrored)
+                )
+            elif method == "voting":
+                consensus_tilt = vote_tilt(
+                    selected_triplets, bins=181, sigma=np.deg2rad(5.0)
+                )
+                rot, psi = rot_psi_from_angle_pair(angle_1[i, j], angle_2[i, j])
+
+                direct_euler = EulerAngles(rot, consensus_tilt, psi)
+                mirrored_euler = EulerAngles(rot, -consensus_tilt, psi)
+
+                direct_mean, mirrored_mean = (
+                    euler_zyz_to_matrix(direct_euler),
+                    euler_zyz_to_matrix(mirrored_euler),
+                )
         else:
             direct_mean, mirrored_mean = _estimate_pairwise_fallback(
                 angle_1[i, j], angle_2[i, j]

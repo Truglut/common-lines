@@ -67,6 +67,17 @@ graph[i, j] = R_j @ R_i.T
 
 Pairwise relative orientations are estimated independently. The graph is not explicitly constrained to satisfy exact inverse or cycle consistency.
 
+For each pair, up to `n_third` geometrically valid third images are sampled
+without replacement. Their tilt estimates cast Gaussian votes with a five-degree
+bandwidth on the interval [0, π]. The largest grid peak is refined continuously
+to avoid rounding the estimated tilt to a bin. The tilt and its negative give
+the two handedness candidates. With the default `n_third=1`, voting retains the
+single triplet estimate; use more third images to obtain a consensus.
+
+The lower-level `estimate_relative_orientation_candidates` function also accepts
+`method="averaging"` to average triplet rotations after aligning their handedness
+branches. Its default is `method="voting"`.
+
 ## Handedness ambiguity
 
 Common-line geometry cannot distinguish between two globally mirrored orientation solutions.

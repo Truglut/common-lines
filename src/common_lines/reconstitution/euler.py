@@ -82,3 +82,44 @@ def alignment_euler_angles(
     mirrored = EulerAngles(rot=direct.rot, tilt=-direct.tilt, psi=direct.psi)
 
     return direct, mirrored
+
+
+def vote_tilt(
+    triplet: CommonLineTriplet, bins: int, sigma: float, eps: float = 1.0e-6
+) -> float:
+    """Estimate one consensus tilt from all broadcast triplets.
+
+    Each tilt casts a Gaussian vote on the interval [0, pi], with bandwidth
+    ``sigma`` in radians. The endpoints are distinct, not periodic. A grid of
+    ``bins`` points locates a peak, then Gaussian mean shift refines it without
+    bin quantization. Thus a single vote retains its original tilt.
+
+    Invalid geometry or an empty batch raises ValueError.
+    """
+    if not isinstance(bins, (int, np.integer)) or bins < 2:
+        raise ValueError("bins must be an integer of at least 2.")
+    if not np.isfinite(sigma) or sigma <= 0:
+        raise ValueError("sigma must be positive and finite, in radians.")
+
+    numerator, denominator, valid = _alignment_geometry(broadcast_triplet(triplet), eps)
+    if not valid.all():
+        raise ValueError("Degenerate or inconsistent common-line geometry.")
+    if valid.size == 0:
+        raise ValueError("At least one triplet is required for voting.")
+
+    histogram_tilt = np.linspace(0.0, np.pi, bins)
+    detected_tilt = np.arccos(np.clip(numerator / denominator, -1.0, 1.0)).ravel()
+    differences = (detected_tilt[:, np.newaxis] - histogram_tilt) / sigma
+    histogram_height = np.exp(-0.5 * differences**2).sum(axis=0)
+    tilt = float(histogram_tilt[np.argmax(histogram_height)])
+
+    # At a stationary point of a Gaussian vote sum, tilt equals the
+    # Gaussian-weighted mean of the detected tilts. Normalization cancels.
+    for _ in range(100):
+        log_weights = -0.5 * ((detected_tilt - tilt) / sigma) ** 2
+        weights = np.exp(log_weights - log_weights.max())
+        refined = float(np.sum(weights * detected_tilt) / weights.sum())
+        if abs(refined - tilt) <= 1.0e-12:
+            return refined
+        tilt = refined
+    return tilt
