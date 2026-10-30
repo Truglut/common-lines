@@ -25,8 +25,8 @@ import mrcfile
 import numpy as np
 
 from common_lines.detection import detect_common_lines_all_pairs
-from common_lines.radon import batch_common_line_sinograms
 from common_lines.forward import compute_intrinsic_common_line_angles
+from common_lines.radon import batch_common_line_sinograms
 
 if __package__:
     from ._benchmark_preprocessing import (

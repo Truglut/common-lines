@@ -4,17 +4,84 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from common_lines.reconstitution.triplets import HANDEDNESS_REFLECTION
 from scripts.orientation_errors import (
+    evaluate_aggregated_pairs,
     evaluate_triplet,
     ground_truth_angles,
     perturb_angles,
     rotation_error_deg,
     sample_triplets,
 )
+
+
+@pytest.mark.parametrize("method", ["averaging", "voting"])
+@pytest.mark.parametrize("n_third", [1, 4])
+def test_aggregation_recovers_exact_and_mirrored_frames(method, n_third):
+    matrices = random_rotations(6)
+    first, second, _ = ground_truth_angles(matrices)
+    for truth in (matrices, HANDEDNESS_REFLECTION @ matrices @ HANDEDNESS_REFLECTION):
+        rows = evaluate_aggregated_pairs(
+            "exact",
+            0.0,
+            first,
+            second,
+            truth,
+            np.arange(6),
+            np.eye(3)[None],
+            method=method,
+            n_third=n_third,
+            seed=0,
+        )
+        assert len(rows) == 30
+        assert not any(row["used_fallback"] for row in rows)
+        assert max(row["rotation_error_deg"] for row in rows) < 1e-4
+
+
+@pytest.mark.parametrize("method", ["averaging", "voting"])
+def test_aggregation_cli_records_method_and_preserves_noise_inputs(
+    tmp_path, monkeypatch, method
+):
+    import csv
+    import json
+
+    from scripts import orientation_errors
+
+    metadata = tmp_path / "particles.npz"
+    np.savez(metadata, matrices=random_rotations(6))
+    prefix = tmp_path / method
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "orientation_errors",
+            str(metadata),
+            "--reconstitution-method",
+            method,
+            "--n-third",
+            "3",
+            "--modes",
+            "exact",
+            "perturbed",
+            "--noise-std",
+            "0",
+            "--output",
+            str(prefix),
+        ],
+    )
+    orientation_errors.main()
+    rows = list(csv.DictReader(prefix.with_suffix(".csv").open()))
+    assert len(rows) == 60
+    assert all(row["reconstitution_method"] == method for row in rows)
+    assert max(float(row["rotation_error_deg"]) for row in rows) < 1e-4
+    assert (
+        json.loads(prefix.with_suffix(".json").read_text())["reconstitution_method"]
+        == method
+    )
 
 
 def random_rotations(n=10, seed=12):

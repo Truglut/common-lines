@@ -6,6 +6,8 @@ Examples (from the repository root):
     python -m scripts.orientation_errors data/particles.npz --modes exact perturbed
     python -m scripts.orientation_errors data/particles.npz --noise-std 1 2 5 10 \\
         --max-triplets 1000 --angle-step 1
+    python -m scripts.orientation_errors data/particles.npz --modes detected \\
+        --reconstitution-method voting --n-third 24
 
 The three modes share the same sampled triplets:
   exact:       common lines from one consistent choice of ground-truth orientations
@@ -32,23 +34,35 @@ The older --pipeline-preprocessing flag remains as a shorthand for the formerly
 default center-of-mass centering and mask/background preprocessing. Exact and perturbed modes use ground-truth
 angles and do not process images. None of these modes runs pipeline.py's graph-level
 postprocessing. For STAR metadata or MRC stacks, see detection_errors.py.
+
+With --reconstitution-method, score pair aggregation over --n-third witnesses
+instead of isolated triplets. Both handedness candidates are scored per edge,
+with an independent symmetry oracle. These errors are optimistic relative to
+pipeline_errors.py, which chooses one global handedness for the whole graph.
+--max-triplets applies only to the original isolated-triplet benchmark.
 """
 
 import argparse
+import csv
+import json
 from itertools import combinations
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+from common_lines.detection import detect_common_lines_all_pairs
+from common_lines.forward import compute_intrinsic_common_line_angles
+from common_lines.graph_estimation import (
+    ReconstitutionMethod,
+    estimate_relative_orientation_candidates,
+)
+from common_lines.procrustes import nearest_rotation
+from common_lines.radon import batch_common_line_sinograms
 from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
 )
-from common_lines.detection import detect_common_lines_all_pairs
-from common_lines.forward import compute_intrinsic_common_line_angles
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
-from common_lines.procrustes import nearest_rotation
-from common_lines.radon import batch_common_line_sinograms
 
 # Reuse the loading and RELION conversion used in the detection benchmark.
 if __package__:
@@ -89,6 +103,112 @@ CSV_COLUMNS = (
     "symmetry_operator_j",
     "symmetry_operator_k",
 )
+
+PAIR_CSV_COLUMNS = (
+    "mode",
+    "reconstitution_method",
+    "noise_std_deg",
+    "particle_i",
+    "particle_j",
+    "used_fallback",
+    "rotation_error_deg",
+)
+
+
+def evaluate_aggregated_pairs(
+    label: str,
+    sigma: float,
+    first: np.ndarray,
+    second: np.ndarray,
+    matrices: np.ndarray,
+    indices: np.ndarray,
+    symmetry_ops: np.ndarray,
+    *,
+    method: ReconstitutionMethod,
+    n_third: int,
+    seed: int,
+) -> list[dict[str, object]]:
+    """Score aggregation before graph handedness selection.
+
+    Each directed edge gets an oracle choice of hand and symmetry operator.
+    This isolates pair estimation and is more optimistic than pipeline_errors'
+    single graph-wide hand. All selected images can serve as witnesses.
+    Input angles are in degrees; only the upper triangle is required.
+    """
+    n = len(matrices)
+    i, j = np.triu_indices(n, 1)
+    a, b = np.deg2rad(first.copy()), np.deg2rad(second.copy())
+    a[j, i], b[j, i] = b[i, j], a[i, j]
+    candidates, fallback = estimate_relative_orientation_candidates(
+        a, b, n_third=n_third, random_seed=seed, method=method
+    )
+    errors = np.full((n, n), np.inf)
+    for operator in symmetry_ops:
+        truth = (matrices @ operator)[None, :] @ matrices[:, None].swapaxes(-1, -2)
+        dot = np.einsum("ijhab,ijab->ijh", candidates, truth)
+        branch_errors = np.rad2deg(np.arccos(np.clip((dot - 1.0) / 2.0, -1.0, 1.0)))
+        errors = np.minimum(errors, branch_errors.min(axis=-1))
+    return [
+        {
+            "mode": label,
+            "reconstitution_method": method,
+            "noise_std_deg": sigma,
+            "particle_i": int(indices[i] + 1),
+            "particle_j": int(indices[j] + 1),
+            "used_fallback": bool(fallback[i, j]),
+            "rotation_error_deg": float(errors[i, j]),
+        }
+        for i in range(n)
+        for j in range(n)
+        if i != j
+    ]
+
+
+def save_pair_results(prefix: Path, grouped: dict, configuration: dict) -> None:
+    """Save per-edge oracle errors, their distributions, and run settings."""
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    with prefix.with_suffix(".csv").open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=PAIR_CSV_COLUMNS)
+        writer.writeheader()
+        writer.writerows(row for rows in grouped.values() for row in rows)
+    prefix.with_suffix(".json").write_text(
+        json.dumps(configuration, default=str, indent=2) + "\n"
+    )
+    fig, ax = plt.subplots(figsize=(6, 4))
+    for label, rows in grouped.items():
+        errors = np.array([row["rotation_error_deg"] for row in rows], dtype=float)
+        finite = np.isfinite(errors)
+        values = errors[finite]
+        fallback = sum(row["used_fallback"] for row in rows)
+        print(
+            f"\n{label}: {len(rows)} directed edges; {fallback} fallbacks; {finite.sum()} finite errors"
+        )
+        if not values.size:
+            continue
+        print(f"  Mean: {values.mean():.2f} deg; median: {np.median(values):.2f} deg")
+        print(
+            f"  Within 20 deg (all edges): {100 * np.count_nonzero(values <= 20) / len(rows):.2f}%"
+        )
+        ax.hist(
+            values,
+            bins=np.linspace(0, 180, 37),
+            histtype="step",
+            density=True,
+            label=label,
+        )
+    ax.set(
+        xlabel="Oracle pair rotation error (deg)",
+        ylabel="Density",
+        title="Pair aggregation before handedness selection",
+    )
+    if ax.patches:
+        ax.legend()
+    fig.tight_layout()
+    fig.savefig(prefix.with_suffix(".png"), dpi=160)
+    plt.close(fig)
+    print(
+        f"Saved: {prefix.with_suffix('.csv')}, {prefix.with_suffix('.json')}, {prefix.with_suffix('.png')}"
+    )
 
 
 def ground_truth_angles(matrices):
@@ -444,6 +564,17 @@ def main():
         default="C1",
         help="Reference-object symmetry, Cn or Dn (default: C1)",
     )
+    parser.add_argument(
+        "--reconstitution-method",
+        choices=("averaging", "voting"),
+        help="Benchmark this pair-aggregation method instead of isolated triplets",
+    )
+    parser.add_argument(
+        "--n-third",
+        type=int,
+        default=8,
+        help="Maximum valid witnesses per pair in aggregation mode (default: 8)",
+    )
     add_preprocessing_arguments(parser)
     parser.add_argument(
         "--pipeline-preprocessing",
@@ -489,45 +620,64 @@ def main():
         rng.choice(len(matrices), size=min(args.n_images, len(matrices)), replace=False)
     )
     selected_matrices = matrices[indices]
-    triplets = sample_triplets(selected_matrices, args.max_triplets, rng)
+    if args.reconstitution_method and not (1 <= args.n_third <= len(indices) - 2):
+        parser.error("--n-third must lie in [1, selected image count - 2]")
+    triplets = (
+        sample_triplets(selected_matrices, args.max_triplets, rng)
+        if args.reconstitution_method is None
+        else None
+    )
     first, second, _ = ground_truth_angles(selected_matrices)
     dummy_corr = np.full_like(first, np.nan)
     grouped = {}
 
-    print(f"Symmetry: {args.symmetry.upper()} (consistent triplet scoring)")
-    print(f"Images selected: {len(indices)}; triplets selected: {len(triplets)}")
-    if "exact" in args.modes:
-        label = "exact"
-        rows = evaluate_mode(
-            label,
-            0.0,
-            triplets,
-            first,
-            second,
-            dummy_corr,
-            selected_matrices,
-            indices,
-            operators,
+    if args.reconstitution_method:
+        print(f"Symmetry: {args.symmetry.upper()} (per-edge hand and symmetry oracle)")
+        print(
+            f"Images: {len(indices)}; method={args.reconstitution_method}; n_third={args.n_third}; seed={args.seed}"
         )
-        grouped[label] = rows
-        print_summary(rows, label)
-    if "perturbed" in args.modes:
-        for sigma in args.noise_std:
-            label = f"noise_{sigma:g}deg"
-            a, b = perturb_angles(first, second, sigma, rng)
+    else:
+        print(f"Symmetry: {args.symmetry.upper()} (consistent triplet scoring)")
+        print(f"Images selected: {len(indices)}; triplets selected: {len(triplets)}")
+
+    def evaluate(
+        label: str, sigma: float, a: np.ndarray, b: np.ndarray, corr: np.ndarray
+    ) -> None:
+        if args.reconstitution_method:
+            grouped[label] = evaluate_aggregated_pairs(
+                label,
+                sigma,
+                a,
+                b,
+                selected_matrices,
+                indices,
+                operators,
+                method=args.reconstitution_method,
+                n_third=args.n_third,
+                seed=args.seed,
+            )
+        else:
             rows = evaluate_mode(
                 label,
                 sigma,
                 triplets,
                 a,
                 b,
-                dummy_corr,
+                corr,
                 selected_matrices,
                 indices,
                 operators,
             )
             grouped[label] = rows
             print_summary(rows, label)
+
+    if "exact" in args.modes:
+        evaluate("exact", 0.0, first, second, dummy_corr)
+    if "perturbed" in args.modes:
+        for sigma in args.noise_std:
+            label = f"noise_{sigma:g}deg"
+            a, b = perturb_angles(first, second, sigma, rng)
+            evaluate(label, sigma, a, b, dummy_corr)
     if "detected" in args.modes:
         theta = np.arange(0.0, 180.0, args.angle_step)
         # Resolve against the same selected image dimensions as the detector.
@@ -546,14 +696,12 @@ def main():
             preprocessing_options=options,
             images=images,
         )
-        label = "detected"
-        rows = evaluate_mode(
-            label, np.nan, triplets, a, b, corr, selected_matrices, indices, operators
-        )
-        grouped[label] = rows
-        print_summary(rows, label)
+        evaluate("detected", np.nan, a, b, corr)
 
-    save_results(args.output, grouped)
+    if args.reconstitution_method:
+        save_pair_results(args.output, grouped, vars(args))
+    else:
+        save_results(args.output, grouped)
 
 
 if __name__ == "__main__":

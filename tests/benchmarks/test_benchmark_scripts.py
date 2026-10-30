@@ -297,3 +297,46 @@ def test_public_pipeline_with_exact_detected_common_lines(monkeypatch):
     assert not estimate.used_fallback.any()
     scored = evaluate_graph(estimate.graph, estimate.used_fallback, matrices)
     assert np.nanmax(scored["errors"]) < 1e-4
+
+
+@pytest.mark.parametrize("method", ["averaging", "voting"])
+def test_pipeline_cli_passes_and_records_reconstitution_method(
+    tmp_path, monkeypatch, method
+):
+    import json
+    from types import SimpleNamespace
+
+    from scripts import pipeline_errors
+
+    matrices = rotations()
+    metadata = tmp_path / "particles.npz"
+    np.savez(metadata, matrices=matrices, original_images=np.ones((4, 9, 9)))
+    prefix = tmp_path / method
+
+    def estimate(images, **kwargs):
+        assert kwargs["reconstitution_method"] == method
+        return SimpleNamespace(
+            graph=true_graph(matrices),
+            used_fallback=np.zeros((4, 4), dtype=bool),
+            handedness_reference=(0, 1),
+        )
+
+    monkeypatch.setattr(
+        pipeline_errors, "build_relative_orientations_graph_with_diagnostics", estimate
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pipeline_errors",
+            str(metadata),
+            "--reconstitution-method",
+            method,
+            "--output",
+            str(prefix),
+        ],
+    )
+    pipeline_errors.main()
+    with np.load(prefix.with_suffix(".npz")) as data:
+        configuration = json.loads(str(data["run_configuration_json"]))
+    assert configuration["reconstitution_method"] == method

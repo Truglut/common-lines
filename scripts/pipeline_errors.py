@@ -10,6 +10,7 @@ Examples (from repository root):
     python -m scripts.pipeline_errors particles.npz --n-images 40 --angle-step 1
     python -m scripts.pipeline_errors particles.npz --n-third 5 --precenter none
     python -m scripts.pipeline_errors particles.npz --preprocessing default --n-third 10
+    python -m scripts.pipeline_errors particles.npz --n-third 24 --reconstitution-method averaging
     python -m scripts.pipeline_errors particles.star --image-stack particles.mrcs
 
 Ground-truth conventions: R_i maps reference coordinates into image i;
@@ -407,6 +408,12 @@ def main():
     )
     parser.add_argument("--common-line-block-size", type=int, default=4)
     parser.add_argument(
+        "--reconstitution-method",
+        choices=("averaging", "voting"),
+        default="voting",
+        help="Triplet aggregation method (default: voting)",
+    )
+    parser.add_argument(
         "--handedness-reference",
         type=int,
         nargs=2,
@@ -451,6 +458,7 @@ def main():
         print("Note: this score does not enforce graph-wide symmetry consistency.")
     print(f"Image preparation: {configuration_description(args)}")
     print(f"n_third={args.n_third}, angle_step={args.angle_step:g}, seed={args.seed}")
+    print(f"Reconstitution method: {args.reconstitution_method}")
     estimate = build_relative_orientations_graph_with_diagnostics(
         images,
         n_third=args.n_third,
@@ -460,6 +468,7 @@ def main():
         precenter_method=None if args.precenter == "none" else args.precenter,
         common_line_block_size=args.common_line_block_size,
         preprocessing_options=options,
+        reconstitution_method=args.reconstitution_method,
     )
     result = evaluate_graph(
         estimate.graph,
