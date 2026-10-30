@@ -1,5 +1,7 @@
 """Geometric correctness and regular-case comparisons with matrix alignment."""
 
+from typing import get_args
+
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -7,6 +9,7 @@ from scipy.spatial.transform import Rotation
 from common_lines import graph_estimation
 from common_lines.euler import euler_zyz_to_matrix
 from common_lines.forward import compute_intrinsic_common_line_angles
+from common_lines.graph_estimation import ReconstitutionMethod
 from common_lines.reconstitution.euler import alignment_euler_angles
 from common_lines.reconstitution.matrix import (
     get_transformation_for_second_image,
@@ -95,7 +98,8 @@ def test_degenerate_inconsistent_and_boundary_geometry() -> None:
         np.testing.assert_allclose(np.linalg.det(matrices), 1.0, rtol=0, atol=1e-15)
 
 
-def test_regular_graph_matches_matrix_solver_up_to_global_handedness() -> None:
+@pytest.mark.parametrize("method", ["averaging", "voting"])
+def test_regular_graph_matches_matrix_solver_up_to_global_handedness(method) -> None:
     rng = np.random.default_rng(12)
     frames = Rotation.random(3, random_state=rng).as_matrix()
     first, second = compute_intrinsic_common_line_angles(
@@ -106,7 +110,7 @@ def test_regular_graph_matches_matrix_solver_up_to_global_handedness() -> None:
 
     for angle_1, angle_2 in [(first, second), (noisy_first, noisy_second)]:
         actual, fallback = graph_estimation.estimate_relative_orientation_candidates(
-            angle_1, angle_2, n_third=1, random_seed=4
+            angle_1, angle_2, n_third=1, random_seed=4, method=method
         )
         # Three images give one triplet per edge, so the public matrix solver
         # provides an independent oracle without reproducing graph averaging.
@@ -148,14 +152,17 @@ def test_regular_graph_matches_matrix_solver_up_to_global_handedness() -> None:
         )
 
 
+@pytest.mark.parametrize("method", get_args(ReconstitutionMethod))
 @pytest.mark.parametrize("n_third", [1, 3])
-def test_graph_recovers_known_frames_with_multiple_third_views(n_third: int) -> None:
+def test_graph_recovers_known_frames_with_multiple_third_views(
+    method: ReconstitutionMethod, n_third: int
+) -> None:
     frames = Rotation.random(6, random_state=np.random.default_rng(12)).as_matrix()
     first, second = compute_intrinsic_common_line_angles(
         frames[:, None], frames[None, :]
     )
     candidates, fallback = graph_estimation.estimate_relative_orientation_candidates(
-        first, second, n_third=n_third, random_seed=4
+        first, second, n_third=n_third, random_seed=4, method=method
     )
     assert not fallback.any()
     graph = graph_estimation.select_consistent_handedness(
@@ -172,7 +179,10 @@ def test_graph_recovers_known_frames_with_multiple_third_views(n_third: int) -> 
     assert error < 1e-11
 
 
-def test_graph_handles_nearly_parallel_and_degenerate_views() -> None:
+@pytest.mark.parametrize("method", get_args(ReconstitutionMethod))
+def test_graph_handles_nearly_parallel_and_degenerate_views(
+    method: ReconstitutionMethod,
+) -> None:
     frames = Rotation.from_euler(
         "ZYZ", [[0, 0, 0], [0.3, 0.7, -0.2], [0.3001, 1.2, 0.4], [-0.8, 0.5, 0.3]]
     ).as_matrix()
@@ -180,7 +190,7 @@ def test_graph_handles_nearly_parallel_and_degenerate_views() -> None:
         frames[:, None], frames[None, :]
     )
     candidates, fallback = graph_estimation.estimate_relative_orientation_candidates(
-        first, second, n_third=3, random_seed=4
+        first, second, n_third=3, random_seed=4, method=method
     )
     assert not fallback.any()
     np.testing.assert_allclose(
@@ -206,7 +216,7 @@ def test_graph_handles_nearly_parallel_and_degenerate_views() -> None:
     )
 
     candidates, fallback = graph_estimation.estimate_relative_orientation_candidates(
-        np.zeros((3, 3)), np.zeros((3, 3)), n_third=3, random_seed=4
+        np.zeros((3, 3)), np.zeros((3, 3)), n_third=3, random_seed=4, method=method
     )
     np.testing.assert_array_equal(fallback, ~np.eye(3, dtype=bool))
     np.testing.assert_allclose(candidates, np.broadcast_to(np.eye(3), candidates.shape))

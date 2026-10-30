@@ -6,6 +6,7 @@ import numpy as np
 from common_lines.centering import PrecenteringMethod, estimate_shifts, shift_images
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.graph_estimation import (
+    ReconstitutionMethod,
     estimate_relative_orientation_candidates,
     select_consistent_handedness,
 )
@@ -57,6 +58,7 @@ def build_relative_orientations_graph(
     precenter_method: PrecenteringMethod | None = None,
     preprocessing_options: PreprocessingOptions | None = None,
     common_line_block_size: int = 4,
+    reconstitution_method: ReconstitutionMethod = "voting",
 ) -> np.ndarray:
     """
     Build a graph of relative 3D orientations between all image pairs.
@@ -133,6 +135,7 @@ def build_relative_orientations_graph(
         precenter_method=precenter_method,
         common_line_block_size=common_line_block_size,
         preprocessing_options=preprocessing_options,
+        reconstitution_method=reconstitution_method,
     ).graph
 
 
@@ -146,6 +149,7 @@ def build_relative_orientations_graph_with_diagnostics(
     precenter_method: PrecenteringMethod | None = None,
     preprocessing_options: PreprocessingOptions | None = None,
     common_line_block_size: int = 4,
+    reconstitution_method: ReconstitutionMethod = "voting",
 ) -> OrientationEstimationResult:
     """
     Estimate the directed relative-orientation graph and return diagnostics.
@@ -196,7 +200,11 @@ def build_relative_orientations_graph_with_diagnostics(
     del sinograms, common_lines
 
     candidates, used_fallback = estimate_relative_orientation_candidates(
-        angle_1, angle_2, n_third=n_third, random_seed=random_seed
+        angle_1,
+        angle_2,
+        n_third=n_third,
+        random_seed=random_seed,
+        method=reconstitution_method,
     )
     del angle_1, angle_2
 

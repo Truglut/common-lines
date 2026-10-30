@@ -55,7 +55,7 @@ def test_graph_defaults_to_voting_with_a_five_degree_bandwidth() -> None:
     first[1, 2:] = np.pi / 2
     second[1, 2:] = tilts
     candidates, fallback = graph_estimation.estimate_relative_orientation_candidates(
-        first, second, n_third=tilts.size, random_seed=4
+        first, second, n_third=tilts.size, random_seed=4, method="voting"
     )
     assert not fallback[0, 1]
     expected = euler_zyz_to_matrix(EulerAngles(-np.pi / 2, np.pi / 3, np.pi / 2))

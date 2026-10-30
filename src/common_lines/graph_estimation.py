@@ -17,6 +17,8 @@ from common_lines.reconstitution.triplets import (
     CommonLineTriplet,
 )
 
+ReconstitutionMethod = Literal["averaging", "voting"]
+
 
 def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
     """
@@ -133,7 +135,7 @@ def estimate_relative_orientation_candidates(
     *,
     n_third: int,
     random_seed: int | None,
-    method: Literal["averaging", "voting"] = "averaging",
+    method: ReconstitutionMethod,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Estimate both handedness candidates for every ordered image pair.

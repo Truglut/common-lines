@@ -1,3 +1,5 @@
+from typing import get_args
+
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -5,6 +7,7 @@ from scipy.spatial.transform import Rotation
 import common_lines.graph_estimation
 from common_lines import pipeline
 from common_lines.forward import compute_intrinsic_common_line_angles
+from src.common_lines.graph_estimation import ReconstitutionMethod
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -29,6 +32,7 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
             np.deg2rad([[0.0, theta_2_deg], [theta_1_deg, 0.0]]),
             n_third=1,
             random_seed=0,
+            method="averaging",  # method does not matter with no third image
         )
     )
     np.testing.assert_array_equal(used_fallback, ~np.eye(2, dtype=bool))
@@ -83,9 +87,7 @@ def _patch_pipeline_to_force_fallback(
 ) -> tuple[np.ndarray, np.ndarray]:
     # Every common line in an image has the same direction, so all triplets
     # are degenerate. Distinct image angles exercise nonidentity fallbacks.
-    angle_1 = np.array(
-        [[0.0, 10.0, 10.0], [40.0, 0.0, 40.0], [80.0, 80.0, 0.0]]
-    )
+    angle_1 = np.array([[0.0, 10.0, 10.0], [40.0, 0.0, 40.0], [80.0, 80.0, 0.0]])
     angle_2 = angle_1.T.copy()
     _patch_detected_common_lines(monkeypatch, angle_1, angle_2)
     return angle_1, angle_2
@@ -136,7 +138,10 @@ def test_simple_api_returns_only_graph(monkeypatch: pytest.MonkeyPatch) -> None:
     np.testing.assert_array_equal(graph, detailed.graph)
 
 
-def test_orientation_graph_uses_i_to_j_coordinate_convention():
+@pytest.mark.parametrize("method", get_args(ReconstitutionMethod))
+def test_orientation_graph_uses_i_to_j_coordinate_convention(
+    method: ReconstitutionMethod,
+):
     """graph[i, j] transforms coordinates from image i to image j."""
 
     # Three hand-checkable frames. Each R_i maps coordinates from the
@@ -183,6 +188,7 @@ def test_orientation_graph_uses_i_to_j_coordinate_convention():
             np.deg2rad(angle_2),
             n_third=1,
             random_seed=0,
+            method=method,
         )
     )
 
@@ -248,9 +254,9 @@ def test_fallback_and_reconstitution_edges_share_i_to_j_convention(
             )
 
 
-@pytest.mark.parametrize("method", [None, "center_of_mass", "reflection"])
+@pytest.mark.parametrize("precenter_method", [None, "center_of_mass", "reflection"])
 @pytest.mark.parametrize("enabled", [False, True])
-def test_pipeline_preprocessing_order(monkeypatch, method, enabled):
+def test_pipeline_preprocessing_order(monkeypatch, precenter_method, enabled):
     _patch_pipeline_to_force_fallback(monkeypatch)
 
     images = np.arange(75, dtype=np.float64).reshape(3, 5, 5) - 30.0
@@ -264,7 +270,7 @@ def test_pipeline_preprocessing_order(monkeypatch, method, enabled):
     processed_batches = []
 
     expected_options = options
-    expected_method = method
+    expected_method = precenter_method
 
     def preprocess(batch, *, options):
         assert options is expected_options
@@ -291,7 +297,7 @@ def test_pipeline_preprocessing_order(monkeypatch, method, enabled):
     def sinograms(batch, *, theta):
         assert batch is processed_batches[-1]
 
-        expected = centered if method is not None else images
+        expected = centered if precenter_method is not None else images
         np.testing.assert_array_equal(
             batch,
             real_preprocess(expected, options=options),
@@ -311,8 +317,8 @@ def test_pipeline_preprocessing_order(monkeypatch, method, enabled):
 
     # Omit disabled options so these cases also exercise the defaults.
     kwargs = {}
-    if method is not None:
-        kwargs["precenter_method"] = method
+    if precenter_method is not None:
+        kwargs["precenter_method"] = precenter_method
     if enabled:
         kwargs["preprocessing_options"] = options
 
@@ -322,6 +328,6 @@ def test_pipeline_preprocessing_order(monkeypatch, method, enabled):
         **kwargs,
     )
 
-    expected_calls = ["preprocess", "estimate", "shift"] if method is not None else []
+    expected_calls = ["preprocess", "estimate", "shift"] if precenter_method is not None else []
     assert calls == expected_calls + ["preprocess", "sinograms"]
     np.testing.assert_array_equal(images, original)
