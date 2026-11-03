@@ -1,5 +1,7 @@
 """Mirror orientation graphs and select compatible handedness branches."""
 
+from __future__ import annotations
+
 import itertools
 
 import numpy as np
