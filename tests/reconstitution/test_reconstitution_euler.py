@@ -32,7 +32,8 @@ def test_candidates_recover_known_geometry_and_match_matrix_solver() -> None:
                 *compute_intrinsic_common_line_angles(frames[1], frames[2])
             ),
         )
-        direct, mirrored = map(euler_zyz_to_matrix, alignment_euler_angles(triplet))
+        direct = euler_zyz_to_matrix(alignment_euler_angles(triplet))
+        mirrored = HANDEDNESS_REFLECTION @ direct @ HANDEDNESS_REFLECTION
         truth = frames[1] @ frames[0].T
         assert (
             min(np.linalg.norm(candidate - truth) for candidate in (direct, mirrored))
@@ -41,16 +42,9 @@ def test_candidates_recover_known_geometry_and_match_matrix_solver() -> None:
         expected = get_transformation_for_second_image(triplet)
         assert (
             min(
-                np.max(np.abs(np.array([direct, mirrored]) - ordered))
-                for ordered in (expected, expected[::-1])
+                np.max(np.abs(candidate - expected)) for candidate in (direct, mirrored)
             )
             < 1e-11
-        )
-        np.testing.assert_allclose(
-            mirrored,
-            HANDEDNESS_REFLECTION @ direct @ HANDEDNESS_REFLECTION,
-            rtol=0,
-            atol=1e-15,
         )
 
 
@@ -79,10 +73,11 @@ def test_degenerate_inconsistent_and_boundary_geometry() -> None:
         triplet = CommonLineTriplet(
             CommonLineAngles(0.0, 0.0), CommonLineAngles(a, 0.0), CommonLineAngles(b, c)
         )
-        direct, mirrored = alignment_euler_angles(triplet)
+        direct = alignment_euler_angles(triplet)
         assert direct.tilt == pytest.approx(expected_tilt, abs=1e-15)
+        matrix = euler_zyz_to_matrix(direct)
         matrices = np.stack(
-            [euler_zyz_to_matrix(direct), euler_zyz_to_matrix(mirrored)]
+            [matrix, HANDEDNESS_REFLECTION @ matrix @ HANDEDNESS_REFLECTION]
         )
         np.testing.assert_allclose(matrices[0], matrices[1], rtol=0, atol=1e-15)
         np.testing.assert_allclose(

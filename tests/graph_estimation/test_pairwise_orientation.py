@@ -7,8 +7,11 @@ import pytest
 
 from common_lines.geometry.euler import EulerAngles, euler_zyz_to_matrix
 from common_lines.graph_estimation import pairwise_orientation
-from common_lines.reconstitution.euler import EulerPair
-from common_lines.reconstitution.triplets import BoolArray, CommonLineTriplet
+from common_lines.reconstitution.triplets import (
+    HANDEDNESS_REFLECTION,
+    BoolArray,
+    CommonLineTriplet,
+)
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -37,10 +40,11 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
         )
     )
     np.testing.assert_array_equal(used_fallback, ~np.eye(2, dtype=bool))
-    direct, mirrored = candidates[0, 1]
+    assert candidates.shape == (2, 2, 3, 3)
+    direct = candidates[0, 1]
 
     _assert_rotation_matrix(direct)
-    assert np.allclose(mirrored, direct)
+    assert np.allclose(HANDEDNESS_REFLECTION @ direct @ HANDEDNESS_REFLECTION, direct)
 
     common_line_1 = _image_plane_direction(theta_1_deg)
     common_line_2 = _image_plane_direction(theta_2_deg)
@@ -84,10 +88,10 @@ def test_graph_filters_and_samples_reproducibly(
         calls[i, j] = third.copy()
         return 0.1 * third
 
-    def estimates(triplet: CommonLineTriplet) -> EulerPair:
+    def estimates(triplet: CommonLineTriplet) -> EulerAngles:
         tilt = record_selection(triplet)
         zero = np.zeros_like(tilt)
-        return EulerAngles(zero, tilt, zero), EulerAngles(zero, -tilt, zero)
+        return EulerAngles(zero, tilt, zero)
 
     def vote(triplet: CommonLineTriplet, bins: int, sigma: float) -> float:
         return float(np.mean(record_selection(triplet)))
@@ -130,7 +134,7 @@ def test_graph_filters_and_samples_reproducibly(
     np.testing.assert_array_equal(repeated, candidates)
     np.testing.assert_array_equal(repeated_fallback, fallback)
 
-    def broken_solver(triplet: CommonLineTriplet, **kwargs: object) -> EulerPair:
+    def broken_solver(triplet: CommonLineTriplet, **kwargs: object) -> EulerAngles:
         raise ValueError("programming error")
 
     monkeypatch.setattr(
@@ -163,4 +167,4 @@ def test_voting_uses_a_five_degree_bandwidth() -> None:
     )
     assert not fallback[0, 1]
     expected = euler_zyz_to_matrix(EulerAngles(-np.pi / 2, np.pi / 3, np.pi / 2))
-    np.testing.assert_allclose(candidates[0, 1, 0], expected, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(candidates[0, 1], expected, rtol=0, atol=1e-12)

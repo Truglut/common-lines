@@ -1,4 +1,4 @@
-"""Estimate both handedness candidates per image pair using third-image witnesses."""
+"""Estimate one arbitrary handedness per image pair using third-image witnesses."""
 
 import itertools
 from typing import Literal
@@ -24,8 +24,7 @@ ReconstitutionMethod = Literal["averaging", "voting"]
 
 def _average_handedness_branches(
     all_direct: np.ndarray,
-    all_mirrored: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
     """
     Average triplet estimates after aligning their handedness branches.
 
@@ -33,6 +32,7 @@ def _average_handedness_branches(
     the branch closest to the current mean is selected before updating the mean.
     """
     selected = [np.asarray(all_direct[0], dtype=np.float64)]
+    all_mirrored = HANDEDNESS_REFLECTION @ all_direct @ HANDEDNESS_REFLECTION
     mean_rotation = selected[0]
 
     for direct, mirrored in zip(all_direct[1:], all_mirrored[1:]):
@@ -42,14 +42,10 @@ def _average_handedness_branches(
         selected.append(direct if direct_distance <= mirrored_distance else mirrored)
         mean_rotation = nearest_rotation(np.mean(selected, axis=0))
 
-    direct_mean = nearest_rotation(np.mean(selected, axis=0))
-    J = HANDEDNESS_REFLECTION
-    return direct_mean, J @ direct_mean @ J
+    return nearest_rotation(np.mean(selected, axis=0))
 
 
-def _estimate_pairwise_fallback(
-    theta_1_rad: float, theta_2_rad: float
-) -> tuple[np.ndarray, np.ndarray]:
+def _estimate_pairwise_fallback(theta_1_rad: float, theta_2_rad: float) -> np.ndarray:
     """
     Return a canonical relative orientation from one pairwise common line.
 
@@ -58,9 +54,6 @@ def _estimate_pairwise_fallback(
     common-line direction in image 1 onto the corresponding coordinates in image 2.
     Since both directions lie in their image XY planes, this is a rotation about Z
     by ``theta_2_rad - theta_1_rad``.
-
-    The mirrored handedness candidate is identical for this pure in-plane
-    rotation, so the same matrix is returned for both branches.
 
     Parameters
     ----------
@@ -73,8 +66,10 @@ def _estimate_pairwise_fallback(
     -------
     numpy.ndarray
         Canonical rotation mapping coordinates from image 1 to image 2.
-    numpy.ndarray
-        Mirrored handedness candidate, equal to the first matrix.
+
+    Notes
+    -----
+    The mirrored handedness candidate is identical for this pure in-plane rotation.
     """
     delta_rad = theta_2_rad - theta_1_rad
     cos_delta = np.cos(delta_rad)
@@ -88,7 +83,7 @@ def _estimate_pairwise_fallback(
         ],
         dtype=np.float64,
     )
-    return rotation, rotation
+    return rotation
 
 
 def estimate_relative_orientation_candidates(
@@ -100,7 +95,7 @@ def estimate_relative_orientation_candidates(
     method: ReconstitutionMethod,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Estimate both handedness candidates for every ordered image pair.
+    Estimate one arbitrary handedness candidate for every ordered image pair.
 
     Parameters
     ----------
@@ -122,9 +117,9 @@ def estimate_relative_orientation_candidates(
     Returns
     -------
     numpy.ndarray
-        Array with shape ``(n_images, n_images, 2, 3, 3)``. For each ordered pair
-        ``(i, j)``, ``candidates[i, j]`` contains the two handedness candidates
-        for the coordinate transformation from image ``i`` to image ``j``.
+        Array with shape ``(n_images, n_images, 3, 3)``. For each ordered pair
+        ``(i, j)``, ``candidates[i, j]`` contains the one arbitrary handedness
+        candidate for the coordinate transformation from image ``i`` to image ``j``.
     numpy.ndarray
         Boolean array with shape ``(n_images, n_images)`` indicating for each directed
         image pair, whether a fallback was used due to not finding a valid third
@@ -139,18 +134,15 @@ def estimate_relative_orientation_candidates(
     image_indices = np.arange(n_images)
     rng = np.random.default_rng(random_seed)
 
-    candidates = np.empty(
-        (n_images, n_images, 2, 3, 3),
-        dtype=np.float64,
-    )
-    candidates[image_indices, image_indices, :, :, :] = np.eye(3)
-    used_fallback = np.zeros((n_images, n_images), dtype=bool)
+    candidates = np.empty((n_images, n_images, 3, 3), dtype=np.float64)
+    candidates[image_indices, image_indices] = np.eye(3)
 
-    available_mask = np.ones(n_images, dtype=bool)
+    used_fallback = np.zeros((n_images, n_images), dtype=bool)
 
     def pair_at(i: int | np.ndarray, j: int | np.ndarray) -> CommonLineAngles:
         return CommonLineAngles(first_rad=angle_1[i, j], second_rad=angle_2[i, j])
 
+    available_mask = np.ones(n_images, dtype=bool)
     for i, j in itertools.permutations(range(n_images), 2):
         available_mask[:] = True
         available_mask[i] = False
@@ -177,9 +169,9 @@ def estimate_relative_orientation_candidates(
             if method == "averaging":
                 # Filtering and solving share the same geometry checks. A solver
                 # failure here is unexpected and must propagate to the caller.
-                direct, mirrored = alignment_euler_angles(selected_triplets)
-                direct_mean, mirrored_mean = _average_handedness_branches(
-                    euler_zyz_to_matrix(direct), euler_zyz_to_matrix(mirrored)
+                direct_euler = alignment_euler_angles(selected_triplets)
+                direct_mean = _average_handedness_branches(
+                    euler_zyz_to_matrix(direct_euler)
                 )
             elif method == "voting":
                 consensus_tilt = vote_tilt(
@@ -187,20 +179,12 @@ def estimate_relative_orientation_candidates(
                 )
                 rot, psi = rot_psi_from_angle_pair(angle_1[i, j], angle_2[i, j])
 
-                direct_euler = EulerAngles(rot, consensus_tilt, psi)
-                mirrored_euler = EulerAngles(rot, -consensus_tilt, psi)
+                direct_mean = euler_zyz_to_matrix(EulerAngles(rot, consensus_tilt, psi))
 
-                direct_mean, mirrored_mean = (
-                    euler_zyz_to_matrix(direct_euler),
-                    euler_zyz_to_matrix(mirrored_euler),
-                )
         else:
-            direct_mean, mirrored_mean = _estimate_pairwise_fallback(
-                angle_1[i, j], angle_2[i, j]
-            )
+            direct_mean = _estimate_pairwise_fallback(angle_1[i, j], angle_2[i, j])
             used_fallback[i, j] = True
 
-        candidates[i, j, 0] = direct_mean
-        candidates[i, j, 1] = mirrored_mean
+        candidates[i, j] = direct_mean
 
     return candidates, used_fallback

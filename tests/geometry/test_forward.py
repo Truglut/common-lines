@@ -8,6 +8,7 @@ from common_lines.geometry.forward import (
 )
 from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
+    mirror_transformation_matrices,
 )
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 
@@ -58,7 +59,7 @@ def test_angles_reconstruct_the_original_or_mirrored_orientations():
     a13, b13 = compute_intrinsic_common_line_angles(reference, third)
     a23, b23 = compute_intrinsic_common_line_angles(second, third)
 
-    direct, mirrored = compute_transformation_matrices(
+    direct = compute_transformation_matrices(
         CommonLineTriplet(
             one_with_two=CommonLineAngles(first_rad=float(a12), second_rad=float(b12)),
             one_with_three=CommonLineAngles(
@@ -69,6 +70,7 @@ def test_angles_reconstruct_the_original_or_mirrored_orientations():
             ),
         )
     )
+    mirrored = mirror_transformation_matrices(direct)
     truth = np.stack([reference, second, third])
 
     assert any(

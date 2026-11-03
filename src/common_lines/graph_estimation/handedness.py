@@ -48,66 +48,76 @@ def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
 
 
 def select_consistent_handedness(
-    candidates: np.ndarray, *, reference_pair: tuple[int, int]
+    async_graph: np.ndarray, *, reference_pair: tuple[int, int]
 ) -> np.ndarray:
     """
     Select one globally consistent handedness branch for each graph edge.
 
-    The first branch of ``reference_pair`` fixes the arbitrary global hand. A
+    The measured rotation at ``reference_pair`` fixes the arbitrary global hand. A
     reference star is then selected using triangles that contain both reference
     images. Every remaining directed edge keeps its independent estimate and
     only chooses the branch closest to the rotation predicted by that star.
     """
-    candidates = np.asarray(candidates, dtype=np.float64)
-    if candidates.ndim != 5 or candidates.shape[2:] != (2, 3, 3):
+    async_graph = np.asarray(async_graph, dtype=np.float64)
+    if async_graph.ndim != 4 or async_graph.shape[2:] != (3, 3):
         raise ValueError(
-            "candidates must have shape (n_images, n_images, 2, 3, 3). "
-            f"Got array with shape {candidates.shape}."
+            "async_graph must have shape (n_images, n_images, 3, 3). "
+            f"Got array with shape {async_graph.shape}."
         )
-    if candidates.shape[0] != candidates.shape[1]:
-        raise ValueError("The first two candidate dimensions must be equal.")
+    if async_graph.shape[0] != async_graph.shape[1]:
+        raise ValueError("The first two dimensions in async_graph must be equal.")
 
-    n_images = candidates.shape[0]
+    n_images = async_graph.shape[0]
     reference_i, reference_j = reference_pair
+    if not (
+        0 <= reference_i < n_images
+        and 0 <= reference_j < n_images
+        and reference_i != reference_j
+    ):
+        raise ValueError(
+            "reference_pair must contain two different valid image indices."
+        )
 
     graph = np.empty((n_images, n_images, 3, 3), dtype=np.float64)
     diagonal = np.arange(n_images)
     graph[diagonal, diagonal] = np.eye(3)
 
-    # The first candidate of the reference edge fixes one of the two global hands.
-    graph[reference_i, reference_j] = candidates[reference_i, reference_j, 0]
+    # The measured reference edge fixes one of the two global hands.
+    graph[reference_i, reference_j] = async_graph[reference_i, reference_j]
 
     # Select a handedness-consistent star around the first reference image.
     for k in range(n_images):
         if k == reference_i or k == reference_j:
             continue
 
-        best_error = np.inf
-        best_reference_branch = 0
+        measured_ik = async_graph[reference_i, k]
+        mirrored_ik = HANDEDNESS_REFLECTION @ measured_ik @ HANDEDNESS_REFLECTION
 
-        for branch_ik in range(2):
-            for branch_jk in range(2):
-                # With graph[a, b] mapping a -> b, the path
-                # reference_i -> reference_j -> k is
-                # R_{j->k} @ R_{i->j}.
-                predicted = (
-                    candidates[reference_j, k, branch_jk]
-                    @ graph[reference_i, reference_j]
-                )
-                error = np.linalg.norm(
-                    predicted - candidates[reference_i, k, branch_ik],
-                    ord="fro",
-                )
+        measured_jk = async_graph[reference_j, k]
+        mirrored_jk = HANDEDNESS_REFLECTION @ measured_jk @ HANDEDNESS_REFLECTION
 
-                if error < best_error:
-                    best_error = error
-                    best_reference_branch = branch_ik
+        min_error_measured = min(
+            np.linalg.norm(
+                measured_jk @ graph[reference_i, reference_j] - measured_ik, ord="fro"
+            ),
+            np.linalg.norm(
+                mirrored_jk @ graph[reference_i, reference_j] - measured_ik, ord="fro"
+            ),
+        )
 
-        graph[reference_i, k] = candidates[
-            reference_i,
-            k,
-            best_reference_branch,
-        ]
+        min_error_mirrored = min(
+            np.linalg.norm(
+                measured_jk @ graph[reference_i, reference_j] - mirrored_ik, ord="fro"
+            ),
+            np.linalg.norm(
+                mirrored_jk @ graph[reference_i, reference_j] - mirrored_ik, ord="fro"
+            ),
+        )
+
+        if min_error_mirrored < min_error_measured:
+            graph[reference_i, k] = mirrored_ik
+        else:
+            graph[reference_i, k] = measured_ik
 
     # Choose every other directed edge using the selected reference star.
     for i, j in itertools.permutations(range(n_images), 2):
@@ -118,16 +128,12 @@ def select_consistent_handedness(
         # Rotation matrices are orthogonal, so the inverse is the transpose.
         predicted = graph[reference_i, j] @ graph[reference_i, i].T
 
-        direct_distance = np.linalg.norm(
-            candidates[i, j, 0] - predicted,
-            ord="fro",
-        )
-        mirrored_distance = np.linalg.norm(
-            candidates[i, j, 1] - predicted,
-            ord="fro",
-        )
+        measured = async_graph[i, j]
+        mirrored = HANDEDNESS_REFLECTION @ measured @ HANDEDNESS_REFLECTION
 
-        branch = 0 if direct_distance <= mirrored_distance else 1
-        graph[i, j] = candidates[i, j, branch]
+        direct_distance = np.linalg.norm(measured - predicted, ord="fro")
+        mirrored_distance = np.linalg.norm(mirrored - predicted, ord="fro")
+
+        graph[i, j] = mirrored if mirrored_distance < direct_distance else measured
 
     return graph

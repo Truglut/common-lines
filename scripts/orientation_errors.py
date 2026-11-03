@@ -57,10 +57,12 @@ from common_lines.geometry.procrustes import nearest_rotation
 from common_lines.graph_estimation import (
     ReconstitutionMethod,
     estimate_relative_orientation_candidates,
+    mirror_relative_orientations_graph,
 )
 from common_lines.radon import batch_common_line_sinograms
 from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
+    mirror_transformation_matrices,
 )
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 
@@ -142,12 +144,14 @@ def evaluate_aggregated_pairs(
     candidates, fallback = estimate_relative_orientation_candidates(
         a, b, n_third=n_third, random_seed=seed, method=method
     )
+    mirrored = mirror_relative_orientations_graph(candidates)
     errors = np.full((n, n), np.inf)
     for operator in symmetry_ops:
         truth = (matrices @ operator)[None, :] @ matrices[:, None].swapaxes(-1, -2)
-        dot = np.einsum("ijhab,ijab->ijh", candidates, truth)
-        branch_errors = np.rad2deg(np.arccos(np.clip((dot - 1.0) / 2.0, -1.0, 1.0)))
-        errors = np.minimum(errors, branch_errors.min(axis=-1))
+        for graph in (candidates, mirrored):
+            dot = np.einsum("ijab,ijab->ij", graph, truth)
+            branch_errors = np.rad2deg(np.arccos(np.clip((dot - 1.0) / 2.0, -1.0, 1.0)))
+            errors = np.minimum(errors, branch_errors)
     return [
         {
             "mode": label,
@@ -393,7 +397,8 @@ def evaluate_triplet(i, j, k, first, second, correlation, matrices, symmetry_ops
                 first_rad=float(angles_rad[4]), second_rad=float(angles_rad[5])
             ),
         )
-        branches = compute_transformation_matrices(triplet)
+        direct = compute_transformation_matrices(triplet)
+        branches = direct, mirror_transformation_matrices(direct)
         branch_results = []
         for branch in branches:
             r_i, r_j, r_k = (nearest_rotation(r) for r in branch)

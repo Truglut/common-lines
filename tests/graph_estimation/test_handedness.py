@@ -1,4 +1,4 @@
-"""Graph handedness selection from reconstructed pair candidates."""
+"""Graph handedness synchronization from arbitrary-handed edge estimates."""
 
 from typing import get_args
 
@@ -50,10 +50,16 @@ def test_regular_graph_matches_matrix_solver_up_to_global_handedness(
                     CommonLineAngles(angle_1[j, k], angle_2[j, k]),
                 )
                 expected[i, j] = get_transformation_for_second_image(triplet)
-        # Candidate order can differ independently on each directed edge.
+        assert actual.shape == (3, 3, 3, 3)
+        # The solvers can choose different hands independently on each edge.
         edge_errors = np.minimum(
-            np.max(np.abs(actual - expected), axis=(-3, -2, -1)),
-            np.max(np.abs(actual - expected[:, :, ::-1]), axis=(-3, -2, -1)),
+            np.max(np.abs(actual - expected), axis=(-2, -1)),
+            np.max(
+                np.abs(
+                    actual - handedness.mirror_relative_orientations_graph(expected)
+                ),
+                axis=(-2, -1),
+            ),
         )
         np.testing.assert_allclose(edge_errors, 0.0, rtol=0, atol=1e-11)
         actual_graph = handedness.select_consistent_handedness(
@@ -146,30 +152,41 @@ def test_graph_handles_nearly_parallel_and_degenerate_views(
     np.testing.assert_allclose(candidates, np.broadcast_to(np.eye(3), candidates.shape))
 
 
+@pytest.mark.parametrize("noise", [0.0, 0.01])
 @pytest.mark.parametrize("reference_pair", [(0, 1), (2, 4), (4, 1)])
 def test_select_consistent_handedness_recovers_independently_flipped_candidates(
     reference_pair: tuple[int, int],
+    noise: float,
 ) -> None:
     rng = np.random.default_rng(23)
     frames = Rotation.random(5, random_state=rng).as_matrix()
     truth = frames[None, :] @ frames[:, None].swapaxes(-1, -2)
+    # Independent edge noise makes cycle consistency inexact. Synchronization
+    # must preserve these measurements and only change their hands.
+    perturbations = Rotation.from_rotvec(rng.normal(0, noise, (25, 3))).as_matrix()
+    truth = perturbations.reshape(truth.shape) @ truth
+    diagonal = np.arange(5)
+    truth[diagonal, diagonal] = np.eye(3)
     mirrored = handedness.mirror_relative_orientations_graph(truth)
-    candidates = np.stack((truth, mirrored), axis=2)
     flipped = rng.integers(0, 2, size=(5, 5), dtype=bool)
-    candidates = np.where(
-        flipped[..., None, None, None], candidates[:, :, ::-1], candidates
-    )
+    candidates = np.where(flipped[..., None, None], mirrored, truth)
     original = candidates.copy()
 
     graph = handedness.select_consistent_handedness(
         candidates, reference_pair=reference_pair
     )
 
-    # The reference's first candidate fixes the global hand; all other
-    # candidate orderings are independent and must not affect recovery.
+    # The measured reference fixes the global hand; all other
+    # edge hands are independent and must not affect recovery.
     expected = mirrored if flipped[reference_pair] else truth
     np.testing.assert_allclose(graph, expected, rtol=0, atol=1e-14)
     np.testing.assert_array_equal(candidates, original)
+    np.testing.assert_allclose(
+        handedness.select_consistent_handedness(graph, reference_pair=reference_pair),
+        graph,
+        rtol=0,
+        atol=1e-14,
+    )
 
 
 @pytest.mark.parametrize("method", get_args(ReconstitutionMethod))

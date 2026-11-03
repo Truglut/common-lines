@@ -70,13 +70,14 @@ Pairwise relative orientations are estimated independently. The graph is not exp
 For each pair, up to `n_third` geometrically valid third images are sampled
 without replacement. Their tilt estimates cast Gaussian votes with a five-degree
 bandwidth on the interval [0, π]. The largest grid peak is refined continuously
-to avoid rounding the estimated tilt to a bin. The tilt and its negative give
-the two handedness candidates. With the default `n_third=1`, voting retains the
+to avoid rounding the estimated tilt to a bin. Each pair stores one rotation
+with an arbitrary local hand. With the default `n_third=1`, voting retains the
 single triplet estimate; use more third images to obtain a consensus.
 
 The lower-level `estimate_relative_orientation_candidates` function also accepts
 `method="averaging"` to average triplet rotations after aligning their handedness
-branches. Its default is `method="voting"`.
+branches; `method` is required at this level. The public pipeline defaults to
+`reconstitution_method="voting"`.
 
 ## Handedness ambiguity
 

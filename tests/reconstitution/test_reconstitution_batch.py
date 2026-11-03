@@ -36,9 +36,9 @@ def _estimates(triplet: CommonLineTriplet) -> tuple[tuple[FloatArray, ...], ...]
     second = get_transformation_for_second_image(triplet)
     euler = alignment_euler_angles(triplet)
     return (
-        full[0] + full[1],
-        second,
-        tuple(euler_zyz_to_matrix(branch) for branch in euler),
+        full,
+        (second,),
+        (euler_zyz_to_matrix(euler),),
     )
 
 
@@ -76,14 +76,6 @@ def test_broadcasting_preserves_scalar_geometry_and_inputs() -> None:
                     atol=1e-11,
                 )
                 np.testing.assert_allclose(np.linalg.det(matrix), 1.0, atol=1e-11)
-            for direct, mirrored in zip(
-                matrices[: len(matrices) // 2], matrices[len(matrices) // 2 :]
-            ):
-                np.testing.assert_allclose(
-                    mirrored,
-                    HANDEDNESS_REFLECTION @ direct @ HANDEDNESS_REFLECTION,
-                    atol=1e-14,
-                )
         for index in np.ndindex(shape):
             scalar_triplet = _triplet([float(a[index]) for a in broadcast])
             valid = valid_euler_triplets(scalar_triplet)
@@ -95,7 +87,14 @@ def test_broadcasting_preserves_scalar_geometry_and_inputs() -> None:
                     np.testing.assert_allclose(matrix[index], reference, atol=1e-12)
         truth = second @ first.swapaxes(-1, -2)
         for matrices in results[1:]:
-            errors = [np.max(np.abs(m - truth), axis=(-2, -1)) for m in matrices]
+            (matrix,) = matrices
+            errors = [
+                np.max(np.abs(candidate - truth), axis=(-2, -1))
+                for candidate in (
+                    matrix,
+                    HANDEDNESS_REFLECTION @ matrix @ HANDEDNESS_REFLECTION,
+                )
+            ]
             assert np.max(np.minimum(*errors)) < 1e-11
         for angle, snapshot in zip(angles, snapshots):
             np.testing.assert_array_equal(angle, snapshot)
@@ -158,7 +157,7 @@ def test_solver_specific_tolerances_and_raw_estimates() -> None:
     alignment_euler_angles(triplet)
 
     triplet = _triplet([0, 0, 0.2, 0, 0.2, 0.4 + 2e-7])
-    raw, _ = get_transformation_for_second_image(triplet)
+    raw = get_transformation_for_second_image(triplet)
     assert not valid_euler_triplets(triplet)  # Cosine and squared-z tolerances differ.
     with pytest.raises(ValueError):
         alignment_euler_angles(triplet)

@@ -4,8 +4,6 @@ from common_lines.geometry.euler import EulerAngles
 
 from .triplets import BoolArray, CommonLineTriplet, FloatArray, broadcast_triplet
 
-EulerPair = tuple[EulerAngles, EulerAngles]
-
 
 def _alignment_geometry(
     triplet: CommonLineTriplet, eps: float
@@ -56,9 +54,9 @@ def rot_psi_from_angle_pair(
 
 def alignment_euler_angles(
     triplet: CommonLineTriplet, eps: float = 1.0e-6
-) -> EulerPair:
+) -> EulerAngles:
     """
-    Return direct and mirrored image-1-to-image-2 Euler angles in radians.
+    Return one arbitrary-handed image-1-to-image-2 Euler estimate in radians.
 
     All six input angles broadcast together; each Euler field has that shape.
     Negating the tilt gives the opposite handedness. ``eps`` bounds both
@@ -79,10 +77,7 @@ def alignment_euler_angles(
     rot, psi = rot_psi_from_angle_pair(
         triplet.one_with_two.first_rad, triplet.one_with_two.second_rad
     )
-    direct = EulerAngles(rot=rot, tilt=tilt, psi=psi)
-    mirrored = EulerAngles(rot=direct.rot, tilt=-direct.tilt, psi=direct.psi)
-
-    return direct, mirrored
+    return EulerAngles(rot=rot, tilt=tilt, psi=psi)
 
 
 def vote_tilt(

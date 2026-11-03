@@ -6,6 +6,7 @@ import pytest
 from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
     get_transformation_for_second_image,
+    mirror_transformation_matrices,
 )
 from common_lines.reconstitution.triplets import (
     HANDEDNESS_REFLECTION,
@@ -60,7 +61,8 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
         ),
     )
 
-    direct, mirrored = compute_transformation_matrices(triplet)
+    direct = compute_transformation_matrices(triplet)
+    mirrored = mirror_transformation_matrices(direct)
 
     for R1, R2, R3 in (direct, mirrored):
         _assert_rotation_matrix(R1)
@@ -91,20 +93,17 @@ def test_second_image_alignment_uses_radian_inputs_consistently():
         ),
     )
 
-    direct_triplet, mirrored_triplet = compute_transformation_matrices(triplet)
-    direct_r2, mirrored_r2 = get_transformation_for_second_image(triplet)
+    rotations = compute_transformation_matrices(triplet)
+    r2 = get_transformation_for_second_image(triplet)
 
-    _assert_rotation_matrix(direct_r2)
-    _assert_rotation_matrix(mirrored_r2)
-    assert np.allclose(direct_r2, direct_triplet[1], atol=1e-10)
-    assert np.allclose(mirrored_r2, mirrored_triplet[1], atol=1e-10)
+    _assert_rotation_matrix(r2)
+    assert np.allclose(r2, rotations[1], atol=1e-10)
 
 
 def test_recovers_known_configuration_in_both_handednesses():
     # These angles describe three mutually orthogonal projection directions.
-    # Both returned branches must preserve that geometry and be related by the
-    # global handedness reflection.
-    direct, mirrored = compute_transformation_matrices(
+    # The estimate and its mirror must both preserve that geometry.
+    direct = compute_transformation_matrices(
         CommonLineTriplet(
             one_with_two=CommonLineAngles(first_rad=0.0, second_rad=0.0),
             one_with_three=CommonLineAngles(first_rad=np.pi / 2, second_rad=0.0),
@@ -112,6 +111,7 @@ def test_recovers_known_configuration_in_both_handednesses():
         )
     )
 
+    mirrored = mirror_transformation_matrices(direct)
     for rotations in (direct, mirrored):
         for R in rotations:
             _assert_rotation_matrix(R)

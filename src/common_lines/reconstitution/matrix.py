@@ -7,8 +7,6 @@ from common_lines.reconstitution.triplets import (
     HANDEDNESS_REFLECTION,
     CommonLineTriplet,
     FloatArray,
-    HandednessPair,
-    RotationPair,
     RotationTriplet,
     broadcast_triplet,
 )
@@ -16,11 +14,11 @@ from common_lines.reconstitution.triplets import (
 
 def compute_transformation_matrices(
     triplet: CommonLineTriplet, eps: float = 1.0e-6
-) -> HandednessPair:
+) -> RotationTriplet:
     """
-    Recover both handedness solutions for three reference-to-image frames.
+    Recover one arbitrary-handed solution for three reference-to-image frames.
 
-    Return ``(direct, mirrored)``, each branch a tuple ``(R1, R2, R3)`` satisfying
+    Return a tuple ``(R1, R2, R3)`` satisfying
     ``v_i = R_i @ v_ref``, with image 1 fixed to the identity. Matrix shapes
     are ``broadcast_shape + (3, 3)``; scalar inputs return 3x3 matrices.
     Angles are oriented radians and need not be wrapped.
@@ -46,9 +44,8 @@ def compute_transformation_matrices(
         eps=eps,
     )
     r1 = np.broadcast_to(np.eye(3), r2.shape).copy()
-    direct = (r1, r2, r3)
-    branches = direct, mirror_transformation_matrices(direct)
-    return branches
+
+    return r1, r2, r3
 
 
 def _get_common_lines_from_angles(
@@ -94,29 +91,26 @@ def _get_common_lines_from_angles(
 
 def get_transformation_for_second_image(
     triplet: CommonLineTriplet, eps: float = 1.0e-6
-) -> RotationPair:
-    """Return direct and mirrored image-1-to-image-2 matrices per triplet.
+) -> FloatArray:
+    """Return one arbitrary-handed image-1-to-image-2 matrix per triplet.
 
-    Each result satisfies ``v_2 = R2 @ v_1`` and has shape
+    The result satisfies ``v_2 = R2 @ v_1`` and has shape
     ``broadcast_shape + (3, 3)``. No aggregation or rotation projection is applied.
     Only image 2 is reconstructed, so degeneracy confined to reconstructing
     image 3 does not invalidate this estimate.
 
-    Return ``(direct, mirrored)``. Any geometrically invalid entry raises
-    ValueError for the whole call. Real, finite input angles are assumed.
+    Any geometrically invalid entry raises ValueError for the whole call. Real, finite input angles are assumed.
     Empty batches are accepted.
     """
     triplet = broadcast_triplet(triplet)
     c12, _, c23 = _get_common_lines_from_angles(triplet, eps)
-    r2 = _compute_matrix_from_common_lines(
+    return _compute_matrix_from_common_lines(
         triplet.one_with_two.second_rad,
         c12,
         triplet.two_with_three.first_rad,
         c23,
         eps=eps,
     )
-    branches = r2, HANDEDNESS_REFLECTION @ r2 @ HANDEDNESS_REFLECTION
-    return branches
 
 
 @overload

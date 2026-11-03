@@ -74,8 +74,8 @@ def build_relative_orientations_graph(
         Seed used to randomize the order in which third images are tested.
     handedness_reference : tuple[int, int], optional
         Ordered image pair used to fix one of the two global handedness
-        solutions. Its first candidate is selected arbitrarily, and the
-        remaining branches are chosen consistently with it.
+        solutions. Its measured rotation fixes the arbitrary global hand, and
+        the remaining edges choose their hands consistently with it.
 
         If ``None``, an edge estimated without fallback is selected
         automatically when possible. If every edge used the fallback, the
@@ -199,7 +199,7 @@ def build_relative_orientations_graph_with_diagnostics(
     angle_1, angle_2 = common_lines.oriented_angles(theta_array_rad, radians=True)
     del sinograms, common_lines
 
-    candidates, used_fallback = estimate_relative_orientation_candidates(
+    async_graph, used_fallback = estimate_relative_orientation_candidates(
         angle_1,
         angle_2,
         n_third=n_third,
@@ -211,7 +211,7 @@ def build_relative_orientations_graph_with_diagnostics(
     reference_pair = _resolve_handedness_reference(
         used_fallback, requested=handedness_reference
     )
-    graph = select_consistent_handedness(candidates, reference_pair=reference_pair)
+    graph = select_consistent_handedness(async_graph, reference_pair=reference_pair)
 
     return OrientationEstimationResult(
         graph=graph,
