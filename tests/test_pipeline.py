@@ -1,9 +1,14 @@
+from typing import Literal, get_args
+from unittest.mock import patch
+
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
 from common_lines import pipeline
 from common_lines.geometry.forward import compute_intrinsic_common_line_angles
+from common_lines.graph_estimation import HandednessMethod
+from common_lines.graph_estimation import handedness as graph_handedness
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -52,7 +57,9 @@ def _patch_pipeline_to_force_fallback(
     return angle_1, angle_2
 
 
-def test_pipeline_diagnostics_report_fallback_edges(monkeypatch):
+def test_pipeline_diagnostics_report_fallback_edges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     angle_1, angle_2 = _patch_pipeline_to_force_fallback(monkeypatch)
 
     images = np.zeros((3, 5, 5), dtype=np.float64)
@@ -97,9 +104,10 @@ def test_simple_api_returns_only_graph(monkeypatch: pytest.MonkeyPatch) -> None:
     np.testing.assert_array_equal(graph, detailed.graph)
 
 
-@pytest.mark.parametrize("random_seed", [0, 4])
+@pytest.mark.parametrize("handedness_method", get_args(HandednessMethod))
 def test_fallback_and_reconstitution_edges_share_i_to_j_convention(
-    monkeypatch: pytest.MonkeyPatch, random_seed: int
+    monkeypatch: pytest.MonkeyPatch,
+    handedness_method: HandednessMethod,
 ) -> None:
     """Fallback and reconstructed edges must use the same graph convention."""
     frames = Rotation.from_euler(
@@ -119,7 +127,8 @@ def test_fallback_and_reconstitution_edges_share_i_to_j_convention(
         np.zeros((4, 5, 5)),
         theta=np.array([0.0, 90.0]),
         n_third=2,
-        random_seed=random_seed,
+        random_seed=4,
+        handedness_method=handedness_method,
     )
 
     expected_fallback = np.zeros((4, 4), dtype=bool)
@@ -225,3 +234,56 @@ def test_pipeline_preprocessing_order(monkeypatch, precenter_method, enabled):
     )
     assert calls == expected_calls + ["preprocess", "sinograms"]
     np.testing.assert_array_equal(images, original)
+
+
+@pytest.mark.parametrize("api", ["simple", "diagnostics"])
+@pytest.mark.parametrize("handedness_method", [None, *get_args(HandednessMethod)])
+def test_pipeline_dispatches_requested_handedness_method(
+    monkeypatch: pytest.MonkeyPatch,
+    api: Literal["simple", "diagnostics"],
+    handedness_method: HandednessMethod | None,
+) -> None:
+    _patch_pipeline_to_force_fallback(monkeypatch)
+    builder = (
+        pipeline.build_relative_orientations_graph
+        if api == "simple"
+        else pipeline.build_relative_orientations_graph_with_diagnostics
+    )
+    kwargs: dict[str, HandednessMethod] = {}
+    if handedness_method is not None:
+        kwargs["handedness_method"] = handedness_method
+
+    # Spy on the real algorithms: equal outputs on simple graphs would hide a
+    # dropped method argument or an incorrect selector branch.
+    with (
+        patch.object(
+            graph_handedness,
+            "_synchronize_with_star",
+            wraps=graph_handedness._synchronize_with_star,
+        ) as star,
+        patch.object(
+            graph_handedness,
+            "_synchronize_with_j_sync",
+            wraps=graph_handedness._synchronize_with_j_sync,
+        ) as synchronization,
+    ):
+        result = builder(
+            np.zeros((3, 5, 5)),
+            theta=np.array([0.0, 90.0]),
+            handedness_reference=(2, 0),
+            **kwargs,
+        )
+        selected, other = (
+            (synchronization, star)
+            if handedness_method == "synchronization"
+            else (star, synchronization)
+        )
+        selected.assert_called_once()
+        other.assert_not_called()
+        assert selected.call_args.kwargs["reference_pair"] == (2, 0)
+
+    if api == "diagnostics":
+        assert isinstance(result, pipeline.OrientationEstimationResult)
+        assert result.handedness_reference == (2, 0)
+    else:
+        assert isinstance(result, np.ndarray)

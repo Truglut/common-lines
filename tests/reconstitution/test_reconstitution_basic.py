@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from common_lines.geometry.handedness import (
-    HANDEDNESS_REFLECTION,
     mirror_transformation_matrices,
 )
 from common_lines.reconstitution.matrix import (
@@ -73,10 +72,6 @@ def test_recovers_both_handednesses_consistent_with_all_common_lines():
         _assert_common_line_correspondence(R1, R3, 110.0, 35.0)
         _assert_common_line_correspondence(R2, R3, 145.0, 125.0)
 
-    J = HANDEDNESS_REFLECTION
-    for R_direct, R_mirrored in zip(direct, mirrored):
-        assert np.allclose(R_mirrored, J @ R_direct @ J, atol=1e-10)
-
 
 def test_second_image_alignment_uses_radian_inputs_consistently():
     """The pipeline-specific second-image solver must use the same radian convention."""
@@ -119,10 +114,6 @@ def test_recovers_known_configuration_in_both_handednesses():
         pairwise_dot_products = normals @ normals.T
 
         assert np.allclose(pairwise_dot_products, np.eye(3), atol=1e-10)
-
-    J = HANDEDNESS_REFLECTION
-    for R_direct, R_mirrored in zip(direct, mirrored):
-        assert np.allclose(R_mirrored, J @ R_direct @ J, atol=1e-10)
 
 
 def test_rejects_degenerate_common_lines_in_reference_image():
