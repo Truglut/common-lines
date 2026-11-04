@@ -1,3 +1,5 @@
+"""Select compatible handedness branches of measured relative orientations."""
+
 import itertools
 from typing import Literal
 
@@ -15,7 +17,51 @@ def select_consistent_handedness(
     *,
     reference_pair: tuple[int, int],
     method: HandednessMethod,
-):
+) -> np.ndarray:
+    """
+    Select one graph-wide handedness branch while preserving edge measurements.
+
+    Each measured rotation has two possible hands, ``R`` and ``J @ R @ J``,
+    where ``J = diag(1, 1, -1)``. Select between them using compatibility across
+    image pairs. The reference edge fixes the arbitrary global hand; the data
+    alone cannot distinguish it from the globally mirrored solution.
+
+    Parameters
+    ----------
+    async_graph : np.ndarray
+        Array with shape ``(n_images, n_images, 3, 3)``, with at least two images.
+        Each ``async_graph[i, j]`` maps coordinates from image ``i`` to image
+        ``j``, up to handedness. Edges may have independent hands and measurement
+        errors. Rotation matrices are assumed; orthogonality and determinants
+        are not checked.
+    reference_pair : tuple[int, int]
+        Ordered pair of distinct, in-range integer image indices. The measured
+        rotation ``async_graph[reference_pair]`` is retained in the output,
+        including when the pair refers to a lower-triangle entry.
+    method : HandednessMethod
+        ``"star"`` selects a reference star and aligns the remaining edge hands
+        with it. ``"synchronization"`` combines triplet constraints through a
+        spectral J-synchronization step.
+
+    Returns
+    -------
+    numpy.ndarray
+        New float64 array with the same shape and coordinate convention as the
+        input. Each off-diagonal entry is its measured rotation or its mirrored
+        branch; diagonal entries are identity matrices. The input is unchanged.
+
+    Raises
+    ------
+    ValueError
+        If the graph shape, reference pair, or method is invalid.
+
+    Notes
+    -----
+    Handedness selection does not enforce exact inverse or cycle consistency
+    of noisy rotations. The two methods can choose different branches on noisy
+    data. Obtain the opposite global solution with
+    ``common_lines.geometry.handedness.mirror_relative_orientations_graph``.
+    """
     async_graph = np.asarray(async_graph, dtype=np.float64)
     if (
         async_graph.ndim != 4
@@ -60,6 +106,10 @@ def _synchronize_with_star(
     reference star is then selected using triangles that contain both reference
     images. Every remaining directed edge keeps its independent estimate and
     only chooses the branch closest to the rotation predicted by that star.
+
+    Inputs are normalized and validated by ``select_consistent_handedness``.
+    Return a new float64 graph with identity diagonal entries; ties retain the
+    measured branch. No measured rotation is replaced by a star prediction.
     """
     n_images = async_graph.shape[0]
     reference_i, reference_j = reference_pair

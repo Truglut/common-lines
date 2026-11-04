@@ -20,7 +20,13 @@ from common_lines.geometry.handedness import HANDEDNESS_REFLECTION
 
 
 class JSyncAdjacencyMatrix:
-    """Sparse adjacency matrix for joint J-synchronization of orientations over image pairs."""
+    """
+    Signed adjacency matrix whose nodes are unordered image pairs.
+
+    Nodes follow upper-triangle order, as in ``np.triu_indices(n_images, k=1)``.
+    Each image triplet connects its three pair nodes: a positive constraint
+    favors equal hands, and a negative constraint favors opposite hands.
+    """
 
     __slots__ = ("matrix", "n_images")
 
@@ -28,6 +34,11 @@ class JSyncAdjacencyMatrix:
     matrix: sp.csr_array
 
     def __init__(self, n_images: int, data: sp.csr_array | None):
+        """Store a float64 CSR matrix of size ``comb(n_images, 2)`` on each axis.
+
+        ``data=None`` creates an empty adjacency matrix. Supplied data must have
+        the expected shape; symmetry and constraint values are assumed.
+        """
         expected_length = math.comb(n_images, 2)
 
         if data is None:
@@ -43,17 +54,27 @@ class JSyncAdjacencyMatrix:
 
     @property
     def n_nodes(self) -> int:
+        """Number of unordered image pairs represented by the matrix."""
         return self.matrix.shape[0]
 
     @property
     def nnz(self) -> int:
+        """Number of stored matrix entries, counting both constraint directions."""
         return self.matrix.nnz
 
     @property
     def n_edges(self) -> int:
+        """Number of undirected constraints in the complete triplet graph."""
         return 3 * math.comb(self.n_images, 3)
 
     def leading_eigenvector(self, seed: int = 0) -> np.ndarray:
+        """
+        Return the eigenvector for the largest algebraic eigenvalue.
+
+        Its signs define a handedness partition up to a global sign. ``seed``
+        fixes the eigensolver's random starting vector. The matrix must have
+        at least two nodes; the two-image case is handled outside this solver.
+        """
         rng = np.random.default_rng(seed=seed)
         v0 = rng.standard_normal(self.n_nodes)
 
@@ -65,6 +86,14 @@ class JSyncAdjacencyMatrix:
     def compute_pair_idx(
         i: np.ndarray | int, j: np.ndarray | int, n_images: int
     ) -> np.ndarray | int:
+        """
+        Map distinct image indices to their unordered upper-triangle index.
+
+        ``i`` and ``j`` may be scalars or broadcast-compatible integer arrays.
+        Swapping them leaves the result unchanged. Indices are assumed to lie
+        in ``[0, n_images)``; diagonal pairs raise ``ValueError`` because they
+        have no synchronization node.
+        """
         i, j = np.asarray(i), np.asarray(j)
 
         if (i == j).any():
@@ -82,12 +111,27 @@ class JSyncAdjacencyMatrix:
         )
 
     def pair_idx(self, i: np.ndarray | int, j: np.ndarray | int) -> np.ndarray | int:
+        """Map image pairs to node indices using this matrix's image count."""
         return self.compute_pair_idx(i, j, self.n_images)
 
     @classmethod
     def from_async_graph(
         cls, async_graph: np.ndarray, batch_size: int = 512
     ) -> JSyncAdjacencyMatrix:
+        """
+        Build signed pair constraints from all upper-triangle image triplets.
+
+        ``async_graph`` has shape ``(n_images, n_images, 3, 3)`` and uses the
+        image-i to image-j coordinate convention. For each ``i < j < k``, choose
+        the relative hands that minimize the triangle closure error, then add
+        three symmetric constraints between its pair nodes. Lower-triangle
+        measurements and diagonal entries do not contribute.
+
+        ``batch_size`` is a positive integer limiting the number of triplets
+        processed together. Batching limits temporary rotation arrays; storing
+        the complete constraint matrix still requires O(n_images**3) entries.
+        The input is unchanged.
+        """
         if (
             async_graph.ndim != 4
             or async_graph.shape[-2:] != (3, 3)
@@ -158,6 +202,17 @@ class JSyncAdjacencyMatrix:
 def _find_group_assignments(
     ij_pairs: np.ndarray, jk_pairs: np.ndarray, ik_pairs: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Return triangle branch labels minimizing Frobenius closure error.
+
+    Inputs have identical shape ``(..., 3, 3)`` and represent i->j, j->k, and
+    i->k rotations. Label 0 retains a rotation and label 1 conjugates it by J.
+    Fixing the i->j label to 0 removes the global handedness ambiguity, leaving
+    four combinations to compare using ``||R_ik.T @ R_jk @ R_ij - I||_F``.
+
+    Return one label array per edge, each with the input's leading batch shape.
+    Only equality or inequality between labels matters for the signed graph.
+    """
     if not (ij_pairs.shape == jk_pairs.shape == ik_pairs.shape):
         raise ValueError(
             "All rotation pairs must have the same shape, got shapes "
@@ -190,24 +245,26 @@ def _find_group_assignments(
 def _synchronize_with_j_sync(
     async_graph: np.ndarray, *, reference_pair: tuple[int, int]
 ) -> np.ndarray:
-    if (
-        async_graph.ndim != 4
-        or async_graph.shape[-2:] != (3, 3)
-        or async_graph.shape[0] != async_graph.shape[1]
-    ):
-        raise ValueError(
-            "async_graph must be an array of shape (n_images, n_images, 3, 3)"
-        )
+    """
+    Select measured edge hands using the spectral triplet partition.
 
+    Use the leading eigenvector of the signed pair adjacency matrix to select
+    upper-triangle hands, then choose each lower-triangle hand by proximity to
+    its upper counterpart's transpose. Anchor the final global hand to the
+    ordered ``reference_pair``, including a lower-triangle reference.
+
+    Inputs follow ``select_consistent_handedness`` and are assumed to be already
+    validated by said function. 
+
+    Return a new float64 graph with identity diagonal entries and each measured edge 
+    retained up to J conjugation.
+    
+    With two images, align the reverse edge directly to the reference transpose 
+    without building a spectral problem. 
+    
+    No exact inverse or cycle consistency is imposed.
+    """
     n_images = async_graph.shape[0]
-    if (
-        not all(0 <= k < n_images for k in reference_pair)
-        or reference_pair[0] == reference_pair[1]
-    ):
-        raise ValueError(
-            f"Provided an invalid reference pair. Expected a pair of distinct "
-            f"integers in [0, {n_images = }), got {reference_pair}"
-        )
 
     graph = np.array(async_graph, dtype=np.float64, copy=True)
     J = HANDEDNESS_REFLECTION

@@ -102,6 +102,15 @@ def build_relative_orientations_graph(
         Number of images per correlation block in all-pairs common-line
         detection. Larger values may improve throughput but require more memory.
         Default is 4.
+    reconstitution_method : ReconstitutionMethod, optional
+        Method used to combine third-image estimates for each pair: ``"voting"``
+        (default) or ``"averaging"``.
+    handedness_method : HandednessMethod, optional
+        Method used to select compatible edge hands: ``"star"`` (default)
+        aligns them using a reference star; ``"synchronization"`` combines
+        triplet constraints through spectral J-synchronization. Both retain
+        each measured rotation up to reflection and leave full rotation
+        synchronization to downstream processing.
 
     Returns
     -------
@@ -288,7 +297,13 @@ def _validate_pipeline_inputs(
 def _resolve_handedness_reference(
     used_fallback: np.ndarray, *, requested: tuple[int, int] | None
 ) -> tuple[int, int]:
-    """Use an informative non-fallback edge as the default handedness reference."""
+    """
+    Return the requested anchor or the first edge estimated without fallback.
+
+    ``used_fallback`` is the directed pair mask from pairwise estimation, and
+    ``requested`` has already been validated by the pipeline. If all edges used
+    the reflection-invariant in-plane fallback, return the arbitrary pair (0, 1).
+    """
     if requested is not None:
         return requested
 
