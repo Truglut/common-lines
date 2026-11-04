@@ -2,10 +2,10 @@ import numpy as np
 import pytest
 
 from common_lines.detection import CommonLineResult, detect_common_lines
+from common_lines.geometry.handedness import mirror_transformation_matrices
 from common_lines.radon import batch_common_line_sinograms
 from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
-    mirror_transformation_matrices,
 )
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 

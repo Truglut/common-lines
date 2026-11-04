@@ -16,7 +16,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
-from common_lines.reconstitution.triplets import HANDEDNESS_REFLECTION
+from common_lines.geometry.handedness import HANDEDNESS_REFLECTION
 
 
 class JSyncAdjacencyMatrix:
@@ -120,7 +120,7 @@ class JSyncAdjacencyMatrix:
             jk_pairs = async_graph[j, k]
             ik_pairs = async_graph[i, k]
 
-            ij_group, jk_group, ik_group = find_optimum_combination(
+            ij_group, jk_group, ik_group = _find_group_assignments(
                 ij_pairs, jk_pairs, ik_pairs
             )
 
@@ -155,7 +155,7 @@ class JSyncAdjacencyMatrix:
         return cls(n_images=n_images, data=matrix)
 
 
-def find_optimum_combination(
+def _find_group_assignments(
     ij_pairs: np.ndarray, jk_pairs: np.ndarray, ik_pairs: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if not (ij_pairs.shape == jk_pairs.shape == ik_pairs.shape):
@@ -187,7 +187,7 @@ def find_optimum_combination(
     return np.unravel_index(flat_groups, costs.shape[:3])
 
 
-def synchronize_handedness(
+def _synchronize_with_j_sync(
     async_graph: np.ndarray, *, reference_pair: tuple[int, int]
 ) -> np.ndarray:
     if (

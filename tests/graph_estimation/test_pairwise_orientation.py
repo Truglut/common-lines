@@ -7,11 +7,9 @@ import pytest
 
 from common_lines.geometry.euler import EulerAngles, euler_zyz_to_matrix
 from common_lines.graph_estimation import pairwise_orientation
-from common_lines.reconstitution.triplets import (
-    HANDEDNESS_REFLECTION,
-    BoolArray,
-    CommonLineTriplet,
-)
+from common_lines.geometry.handedness import HANDEDNESS_REFLECTION
+from common_lines.reconstitution.triplets import CommonLineTriplet
+from common_lines.types import BoolArray
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:

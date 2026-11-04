@@ -3,16 +3,15 @@
 import numpy as np
 import pytest
 
+from common_lines.geometry.handedness import (
+    HANDEDNESS_REFLECTION,
+    mirror_transformation_matrices,
+)
 from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
     get_transformation_for_second_image,
-    mirror_transformation_matrices,
 )
-from common_lines.reconstitution.triplets import (
-    HANDEDNESS_REFLECTION,
-    CommonLineAngles,
-    CommonLineTriplet,
-)
+from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:

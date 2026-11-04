@@ -6,6 +6,7 @@ import numpy as np
 from common_lines.centering import PrecenteringMethod, estimate_shifts, shift_images
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.graph_estimation import (
+    HandednessMethod,
     ReconstitutionMethod,
     estimate_relative_orientation_candidates,
     select_consistent_handedness,
@@ -59,6 +60,7 @@ def build_relative_orientations_graph(
     preprocessing_options: PreprocessingOptions | None = None,
     common_line_block_size: int = 4,
     reconstitution_method: ReconstitutionMethod = "voting",
+    handedness_method: HandednessMethod = "star",
 ) -> np.ndarray:
     """
     Build a graph of relative 3D orientations between all image pairs.
@@ -136,6 +138,7 @@ def build_relative_orientations_graph(
         common_line_block_size=common_line_block_size,
         preprocessing_options=preprocessing_options,
         reconstitution_method=reconstitution_method,
+        handedness_method=handedness_method,
     ).graph
 
 
@@ -150,6 +153,7 @@ def build_relative_orientations_graph_with_diagnostics(
     preprocessing_options: PreprocessingOptions | None = None,
     common_line_block_size: int = 4,
     reconstitution_method: ReconstitutionMethod = "voting",
+    handedness_method: HandednessMethod = "star",
 ) -> OrientationEstimationResult:
     """
     Estimate the directed relative-orientation graph and return diagnostics.
@@ -211,7 +215,9 @@ def build_relative_orientations_graph_with_diagnostics(
     reference_pair = _resolve_handedness_reference(
         used_fallback, requested=handedness_reference
     )
-    graph = select_consistent_handedness(async_graph, reference_pair=reference_pair)
+    graph = select_consistent_handedness(
+        async_graph, reference_pair=reference_pair, method=handedness_method
+    )
 
     return OrientationEstimationResult(
         graph=graph,

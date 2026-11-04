@@ -6,6 +6,7 @@ from scipy.spatial.transform import Rotation
 
 from common_lines.geometry.euler import euler_zyz_to_matrix
 from common_lines.geometry.forward import compute_intrinsic_common_line_angles
+from common_lines.geometry.handedness import HANDEDNESS_REFLECTION
 from common_lines.reconstitution.euler import (
     alignment_euler_angles,
     valid_euler_triplets,
@@ -14,12 +15,8 @@ from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
     get_transformation_for_second_image,
 )
-from common_lines.reconstitution.triplets import (
-    HANDEDNESS_REFLECTION,
-    CommonLineAngles,
-    CommonLineTriplet,
-    FloatArray,
-)
+from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
+from common_lines.types import FloatArray
 
 
 def _triplet(angles: list[float | np.ndarray]) -> CommonLineTriplet:

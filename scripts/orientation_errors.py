@@ -53,16 +53,18 @@ import numpy as np
 
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.geometry.forward import compute_intrinsic_common_line_angles
+from common_lines.geometry.handedness import (
+    mirror_relative_orientations_graph,
+    mirror_transformation_matrices,
+)
 from common_lines.geometry.procrustes import nearest_rotation
 from common_lines.graph_estimation import (
     ReconstitutionMethod,
     estimate_relative_orientation_candidates,
-    mirror_relative_orientations_graph,
 )
 from common_lines.radon import batch_common_line_sinograms
 from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
-    mirror_transformation_matrices,
 )
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 

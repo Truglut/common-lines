@@ -1,55 +1,56 @@
-"""Mirror orientation graphs and select compatible handedness branches."""
-
-from __future__ import annotations
-
 import itertools
+from typing import Literal
 
 import numpy as np
 
-from common_lines.reconstitution.triplets import HANDEDNESS_REFLECTION
+from common_lines.geometry.handedness import HANDEDNESS_REFLECTION
 
+from .j_synchronization import _synchronize_with_j_sync
 
-def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
-    """
-    Return the opposite-handed solution for a relative-orientation graph.
-
-    Every relative rotation is conjugated with
-
-        J = diag(1, 1, -1)
-
-    so that
-
-        mirrored[i, j] = J @ graph[i, j] @ J.
-
-    The returned graph follows the same coordinate convention as the input:
-
-        v_j = mirrored[i, j] @ v_i
-
-    Parameters
-    ----------
-    graph
-        Relative-orientation graph with shape
-        ``(n_images, n_images, 3, 3)``.
-
-    Returns
-    -------
-    numpy.ndarray
-        Graph representing the globally mirrored handedness solution.
-    """
-    graph = np.asarray(graph, dtype=np.float64)
-    if graph.ndim != 4 or graph.shape[2:] != (3, 3):
-        raise ValueError(
-            "graph must have shape (n_images, n_images, 3, 3). "
-            f"Got array with shape {graph.shape}."
-        )
-    if graph.shape[0] != graph.shape[1]:
-        raise ValueError("The first two graph dimensions must be equal.")
-
-    J = HANDEDNESS_REFLECTION
-    return J @ graph @ J
+HandednessMethod = Literal["star", "synchronization"]
 
 
 def select_consistent_handedness(
+    async_graph: np.ndarray,
+    *,
+    reference_pair: tuple[int, int],
+    method: HandednessMethod,
+):
+    async_graph = np.asarray(async_graph, dtype=np.float64)
+    if (
+        async_graph.ndim != 4
+        or async_graph.shape[-2:] != (3, 3)
+        or async_graph.shape[0] != async_graph.shape[1]
+    ):
+        raise ValueError(
+            "async_graph must be an array of shape (n_images, n_images, 3, 3)"
+        )
+    n_images = async_graph.shape[0]
+    if (
+        not isinstance(reference_pair, tuple)
+        or len(reference_pair) != 2
+        or not all(
+            isinstance(index, (int, np.integer))
+            and not isinstance(index, (bool, np.bool_))
+            and 0 <= index < n_images
+            for index in reference_pair
+        )
+        or reference_pair[0] == reference_pair[1]
+    ):
+        raise ValueError(
+            "reference_pair must contain two distinct integer image indices "
+            f"in [0, {n_images})."
+        )
+
+    if method == "star":
+        return _synchronize_with_star(async_graph, reference_pair=reference_pair)
+    elif method == "synchronization":
+        return _synchronize_with_j_sync(async_graph, reference_pair=reference_pair)
+
+    raise ValueError(f"Unrecognized handedness selection method: {method}")
+
+
+def _synchronize_with_star(
     async_graph: np.ndarray, *, reference_pair: tuple[int, int]
 ) -> np.ndarray:
     """
@@ -60,25 +61,8 @@ def select_consistent_handedness(
     images. Every remaining directed edge keeps its independent estimate and
     only chooses the branch closest to the rotation predicted by that star.
     """
-    async_graph = np.asarray(async_graph, dtype=np.float64)
-    if async_graph.ndim != 4 or async_graph.shape[2:] != (3, 3):
-        raise ValueError(
-            "async_graph must have shape (n_images, n_images, 3, 3). "
-            f"Got array with shape {async_graph.shape}."
-        )
-    if async_graph.shape[0] != async_graph.shape[1]:
-        raise ValueError("The first two dimensions in async_graph must be equal.")
-
     n_images = async_graph.shape[0]
     reference_i, reference_j = reference_pair
-    if not (
-        0 <= reference_i < n_images
-        and 0 <= reference_j < n_images
-        and reference_i != reference_j
-    ):
-        raise ValueError(
-            "reference_pair must contain two different valid image indices."
-        )
 
     graph = np.empty((n_images, n_images, 3, 3), dtype=np.float64)
     diagonal = np.arange(n_images)

@@ -6,6 +6,7 @@ from typing import Literal
 import numpy as np
 
 from common_lines.geometry.euler import EulerAngles, euler_zyz_to_matrix
+from common_lines.geometry.handedness import HANDEDNESS_REFLECTION
 from common_lines.geometry.procrustes import nearest_rotation
 from common_lines.reconstitution.euler import (
     alignment_euler_angles,
@@ -13,11 +14,7 @@ from common_lines.reconstitution.euler import (
     valid_euler_triplets,
     vote_tilt,
 )
-from common_lines.reconstitution.triplets import (
-    HANDEDNESS_REFLECTION,
-    CommonLineAngles,
-    CommonLineTriplet,
-)
+from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 
 ReconstitutionMethod = Literal["averaging", "voting"]
 

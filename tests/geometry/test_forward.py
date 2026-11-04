@@ -6,9 +6,9 @@ from common_lines.geometry.forward import (
     compute_intrinsic_common_line_angles,
     find_common_lines,
 )
+from common_lines.geometry.handedness import mirror_transformation_matrices
 from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
-    mirror_transformation_matrices,
 )
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 

@@ -1,8 +1,9 @@
 import numpy as np
 
 from common_lines.geometry.euler import EulerAngles
+from common_lines.types import BoolArray, FloatArray
 
-from .triplets import BoolArray, CommonLineTriplet, FloatArray, broadcast_triplet
+from .triplets import CommonLineTriplet, broadcast_triplet
 
 
 def _alignment_geometry(

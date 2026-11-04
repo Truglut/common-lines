@@ -6,12 +6,13 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
+from common_lines.geometry import handedness
 from common_lines.geometry.forward import compute_intrinsic_common_line_angles
 from common_lines.graph_estimation import (
     ReconstitutionMethod,
-    handedness,
     pairwise_orientation,
 )
+from common_lines.graph_estimation.handedness import _synchronize_with_star
 from common_lines.reconstitution.matrix import get_transformation_for_second_image
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 
@@ -62,12 +63,8 @@ def test_regular_graph_matches_matrix_solver_up_to_global_handedness(
             ),
         )
         np.testing.assert_allclose(edge_errors, 0.0, rtol=0, atol=1e-11)
-        actual_graph = handedness.select_consistent_handedness(
-            actual, reference_pair=(0, 1)
-        )
-        expected_graph = handedness.select_consistent_handedness(
-            expected, reference_pair=(0, 1)
-        )
+        actual_graph = _synchronize_with_star(actual, reference_pair=(0, 1))
+        expected_graph = _synchronize_with_star(expected, reference_pair=(0, 1))
         assert (
             min(
                 np.max(np.abs(actual_graph - candidate))
@@ -95,7 +92,7 @@ def test_graph_recovers_known_frames_with_multiple_third_views(
         )
     )
     assert not fallback.any()
-    graph = handedness.select_consistent_handedness(candidates, reference_pair=(0, 1))
+    graph = _synchronize_with_star(candidates, reference_pair=(0, 1))
     truth = frames[None, :] @ frames[:, None].swapaxes(-1, -2)
     error = min(
         np.max(np.abs(graph - expected))
@@ -130,7 +127,7 @@ def test_graph_handles_nearly_parallel_and_degenerate_views(
         atol=2e-15,
     )
     np.testing.assert_allclose(np.linalg.det(candidates), 1.0, rtol=0, atol=2e-15)
-    graph = handedness.select_consistent_handedness(candidates, reference_pair=(0, 1))
+    graph = _synchronize_with_star(candidates, reference_pair=(0, 1))
     truth = frames[None, :] @ frames[:, None].swapaxes(-1, -2)
     assert (
         min(
@@ -172,9 +169,7 @@ def test_select_consistent_handedness_recovers_independently_flipped_candidates(
     candidates = np.where(flipped[..., None, None], mirrored, truth)
     original = candidates.copy()
 
-    graph = handedness.select_consistent_handedness(
-        candidates, reference_pair=reference_pair
-    )
+    graph = _synchronize_with_star(candidates, reference_pair=reference_pair)
 
     # The measured reference fixes the global hand; all other
     # edge hands are independent and must not affect recovery.
@@ -182,7 +177,7 @@ def test_select_consistent_handedness_recovers_independently_flipped_candidates(
     np.testing.assert_allclose(graph, expected, rtol=0, atol=1e-14)
     np.testing.assert_array_equal(candidates, original)
     np.testing.assert_allclose(
-        handedness.select_consistent_handedness(graph, reference_pair=reference_pair),
+        _synchronize_with_star(graph, reference_pair=reference_pair),
         graph,
         rtol=0,
         atol=1e-14,
@@ -245,7 +240,7 @@ def test_orientation_graph_uses_i_to_j_coordinate_convention(
 
     assert not np.any(used_fallback)
 
-    graph = handedness.select_consistent_handedness(
+    graph = _synchronize_with_star(
         candidates,
         reference_pair=(0, 1),
     )

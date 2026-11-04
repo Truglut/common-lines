@@ -1,15 +1,7 @@
-from collections.abc import Iterable
-from typing import overload
-
 import numpy as np
 
-from common_lines.reconstitution.triplets import (
-    HANDEDNESS_REFLECTION,
-    CommonLineTriplet,
-    FloatArray,
-    RotationTriplet,
-    broadcast_triplet,
-)
+from common_lines.reconstitution.triplets import CommonLineTriplet, broadcast_triplet
+from common_lines.types import FloatArray, RotationTriplet
 
 
 def compute_transformation_matrices(
@@ -111,28 +103,6 @@ def get_transformation_for_second_image(
         c23,
         eps=eps,
     )
-
-
-@overload
-def mirror_transformation_matrices(rotations: RotationTriplet) -> RotationTriplet: ...
-
-
-@overload
-def mirror_transformation_matrices(
-    rotations: Iterable[np.ndarray],
-) -> tuple[FloatArray, ...]: ...
-
-
-def mirror_transformation_matrices(
-    rotations: Iterable[np.ndarray],
-) -> tuple[FloatArray, ...]:
-    """Return opposite-handed frames via J @ R @ J, J = diag(1, 1, -1).
-
-    Matrices may have arbitrary leading batch dimensions. Each matrix maps
-    coordinates from the common reference frame to its image frame.
-    """
-    J = HANDEDNESS_REFLECTION
-    return tuple(J @ rotation @ J for rotation in rotations)
 
 
 def _compute_matrix_from_common_lines(
