@@ -1,4 +1,4 @@
-"""Mirror orientation graphs and select compatible handedness branches."""
+"""Reflect frames and relative-orientation graphs into the opposite global hand."""
 
 from __future__ import annotations
 
@@ -36,7 +36,14 @@ def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
     Returns
     -------
     numpy.ndarray
-        Graph representing the globally mirrored handedness solution.
+        New float64 array of the same shape representing the globally mirrored
+        handedness solution. The input is unchanged; applying this operation
+        twice recovers its original values.
+
+    Raises
+    ------
+    ValueError
+        If the graph does not have shape ``(n_images, n_images, 3, 3)``.
     """
     graph = np.asarray(graph, dtype=np.float64)
     if graph.ndim != 4 or graph.shape[2:] != (3, 3):
@@ -54,10 +61,28 @@ def mirror_relative_orientations_graph(graph: np.ndarray) -> np.ndarray:
 def mirror_transformation_matrices(
     rotations: Iterable[np.ndarray],
 ) -> tuple[FloatArray, ...]:
-    """Return opposite-handed frames via J @ R @ J, J = diag(1, 1, -1).
+    """
+    Return opposite-handed frames via ``J @ R @ J``, ``J = diag(1, 1, -1)``.
 
-    Matrices may have arbitrary leading batch dimensions. Each matrix maps
-    coordinates from the common reference frame to its image frame.
+    Parameters
+    ----------
+    rotations : Iterable[numpy.ndarray]
+        Frame matrices mapping coordinates from a common reference system to
+        image coordinates. Each element has shape ``(..., 3, 3)`` and may carry
+        arbitrary leading batch dimensions. A stack with shape ``(n, 3, 3)``
+        is also accepted as an iterable of ``n`` frames.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, ...]
+        New arrays in input order, preserving each element's shape and frame
+        convention. The input is unchanged. An empty iterable gives an empty
+        tuple. Applying the operation twice recovers the original values.
+
+    Notes
+    -----
+    This changes the hand of all supplied frames together. It does not select
+    consistent hands for independently ambiguous relative-orientation edges.
     """
     J = HANDEDNESS_REFLECTION
     return tuple(J @ rotation @ J for rotation in rotations)
