@@ -48,6 +48,13 @@ def valid_euler_triplets(triplet: CommonLineTriplet, eps: float = 1.0e-6) -> Boo
 def rot_psi_from_angle_pair(
     angle_1: FloatArray | float, angle_2: FloatArray | float
 ) -> tuple[FloatArray | float, FloatArray | float]:
+    """Return ZYZ in-plane angles from an oriented pair of common-line angles.
+
+    Inputs are radians in image 1 and image 2. Return
+    ``(angle_1 - pi/2, pi/2 - angle_2)`` without wrapping, using the convention
+    of ``euler_zyz_to_matrix``. Scalars and NumPy arrays are accepted. The tilt
+    remains undetermined by this pair and must be obtained from a third image.
+    """
     quarter_turn = np.pi / 2
 
     return angle_1 - quarter_turn, quarter_turn - angle_2

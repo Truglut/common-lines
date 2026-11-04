@@ -1,8 +1,6 @@
-from common_lines.centering._validation import _as_single_image
-from common_lines.centering._validation import _as_image_batch
-
-
 import numpy as np
+
+from common_lines.centering._validation import _as_image_batch, _as_single_image
 
 
 def shift_images(images: np.ndarray, shifts: np.ndarray) -> np.ndarray:
@@ -23,6 +21,8 @@ def shift_images(images: np.ndarray, shifts: np.ndarray) -> np.ndarray:
     numpy.ndarray
         Shifted images with the same shape as ``images``. Floating-point inputs
         retain their precision; integer inputs are converted to ``float64``.
+        The input is unchanged. Samples outside the image are treated as zero,
+        without wrapping content across the borders.
     """
     images = _as_image_batch(images)
     shifts = np.asarray(shifts, dtype=np.float64)

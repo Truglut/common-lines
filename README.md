@@ -18,16 +18,17 @@ See [Rotation convention](#rotation-convention) for more details on the precise 
 
 ## Installation
 
-From the repository root:
+Use Python 3.10 or newer. From the repository root:
 
 ```bash
 pip install .
 ```
 
-For development:
+For development and tests:
 
 ```bash
-pip install -e .
+pip install -e ".[test]"
+python -m pytest
 ```
 
 ## Basic usage
@@ -41,10 +42,13 @@ graph = build_relative_orientations_graph(images)
 `images` must be a NumPy array with shape ``(n_images, height, width)`` containing at least three square particle images.
 
 The returned array has shape ``(n_images, n_images, 3, 3)``, and each block ``graph[i, j]`` is a 3D rotation matrix describing the estimated relative orientation between images ``i`` and ``j``.
+Diagonal blocks are identity matrices. The function leaves the input images unchanged; image-file loading and downstream rotation synchronization are performed by the caller.
 
 ## Rotation convention
 
 Rotations are always interpreted as transformations between coordinate systems/change-of-basis matrices.
+
+Image-plane coordinates use ``(x, y) = (column, row)``, with positive y towards increasing row indices. The optional pipeline argument `theta` is in degrees and defaults to `np.arange(0.0, 180.0, 0.5)`.
 
 If ``v_i`` contains the coordinates of a 3D vector in the coordinate system associated with image ``i``, then
 
@@ -185,6 +189,7 @@ handedness_reference = result.handedness_reference
 Normally, a relative orientation is reconstructed using a third image. For some image pairs, no tested third image may produce a valid angular-reconstitution geometry. Rather than failing the complete estimation, the code uses a deterministic pairwise fallback for those edges.
 
 ``used_fallback[i, j]`` indicates whether this occurred for the directed edge from image i to image j.
+Its diagonal is False. This is a fallback indicator, not a confidence score: an edge estimated without fallback can still be inaccurate.
 
 The fallback still respects the same convention:
 

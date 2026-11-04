@@ -68,7 +68,8 @@ def build_relative_orientations_graph(
     Parameters
     ----------
     images : np.ndarray
-        Input images with shape ``(n_images, height, width)``.
+        Input images with shape ``(n_images, height, width)``, with at least
+        three square images. The input is unchanged.
     n_third : int
         Maximum number of valid third images used to estimate each ordered pair.
         Must lie in ``[1, n_images - 2]``.
@@ -84,7 +85,9 @@ def build_relative_orientations_graph(
         particular reference is irrelevant and ``(0, 1)`` is used.
     theta : np.ndarray, optional
         Angular grid in degrees used to compute the sinograms. If None,
-        ``DEFAULT_THETA`` is used.
+        ``DEFAULT_THETA = np.arange(0.0, 180.0, 0.5)`` is used. Image-plane
+        coordinates are ``(x, y) = (column, row)``, with positive y towards
+        increasing row indices.
     precenter_method : PrecenteringMethod, optional
         Method used to estimate particle translations before common-line
         detection. Options are "center_of_mass" and "reflection".
