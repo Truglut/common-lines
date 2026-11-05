@@ -96,20 +96,37 @@ def alignment_euler_angles(
 def vote_tilt(
     triplet: CommonLineTriplet, bins: int, sigma: float, eps: float = 1.0e-6
 ) -> float:
-    """Estimate one consensus tilt from all broadcast triplets.
-
-    Each tilt casts a Gaussian vote on the interval [0, pi], with bandwidth
-    ``sigma`` in radians. The endpoints are distinct, not periodic. A grid of
-    ``bins`` points locates a peak, then Gaussian mean shift refines it without
-    bin quantization. Thus a single vote retains its original tilt.
-
-    Invalid geometry or an empty batch raises ValueError.
     """
-    if not isinstance(bins, (int, np.integer)) or bins < 2:
-        raise ValueError("bins must be an integer of at least 2.")
-    if not np.isfinite(sigma) or sigma <= 0:
-        raise ValueError("sigma must be positive and finite, in radians.")
+    Estimate one consensus tilt from all broadcast triplets.
 
+    Each tilt casts a Gaussian vote on the interval [0, pi].
+    A grid of ``bins`` points locates a peak, then Gaussian
+    mean shift refines it to avoid bin quantization.
+
+    Parameters
+    ----------
+    triplet : CommonLineTriplet
+        Detected common line angles. All six angle fields broadcast together;
+        each broadcast entry contributes one vote.
+    bins : int
+        Number of histogram bins used to initially locate the peak.
+    sigma : float
+        Positive, finite bandwidth of Gaussian votes, in radians.
+    eps : float, optional
+        Numerical tolerance for geometrically degenerate configurations, by default 1.0e-6
+
+    Returns
+    -------
+    float
+        Consensus tilt angle for the relative orientation of image 2 with respect to
+        image 1 in the triplet.
+
+    Raises
+    ------
+    ValueError
+        If any of the provided triplets are geometrically degenerate, or if an
+        empty triplet object is provided.
+    """
     numerator, denominator, valid = _alignment_geometry(broadcast_triplet(triplet), eps)
     if not valid.all():
         raise ValueError("Degenerate or inconsistent common-line geometry.")
@@ -124,13 +141,58 @@ def vote_tilt(
 
 
 def _weighted_histogram_vote(
-    detected_tilt: np.ndarray,
+    detected_tilt: FloatArray,
     bins: int,
     sigma: float,
-    weights: np.ndarray | None = None,
+    weights: FloatArray | None = None,
 ) -> tuple[float, float]:
+    """
+    Return a Gaussian consensus tilt and normalized support at that tilt.
+
+    Parameters
+    ----------
+    detected_tilt : FloatArray
+        Nonempty one-dimensional array of finite angles in [0, pi], in radians.
+    bins : int
+        Number of histogram bins used to locate the initial peak.
+        Must be an integer >= 2
+    sigma : float
+        Positive, finite bandwidth of the Gaussian votes, in radians.
+    weights : FloatArray | None, optional
+        Finite, nonnegative reliability weights with the same shape as
+        ``detected_tilt``, by default None (equal weights).
+
+    Returns
+    -------
+    float
+        Consensus angle derived from the Gaussian voting.
+    float
+        Confidence value measuring agreement between all provided estimates.
+        Computed as sum(w * exp(-0.5 * ((t - tilt) / sigma)**2)) / sum(w).
+        A single positive-weight vote has confidence one.
+
+    Raises
+    ------
+    ValueError
+        If ``detected_tilt`` is empty or all provided weights are non-positive.
+
+    Notes
+    -----
+    Shapes, finite values, angle bounds, bins, and sigma are assumed valid.
+    Angles with non-positive weights are ignored. The interval [0, pi] is nonperiodic.
+    The grid initializes Gaussian mean shift, which returns a refined estimate
+    after convergence or the iteration limit; a global maximum is not guaranteed.
+    Scaling all weights by a positive constant preserves both outputs.
+    """
     if weights is None:
-        weights = np.full_like(detected_tilt, fill_value=1.0)
+        weights = np.ones_like(detected_tilt)
+
+    positive = weights > 0
+    if not np.any(positive):
+        raise ValueError("At least one weight must be positive.")
+    # Zero-weight witnesses must not determine the refinement's exponent shift.
+    detected_tilt = detected_tilt[positive]
+    weights = weights[positive]
 
     histogram_tilt = np.linspace(0.0, np.pi, bins)
 
@@ -146,7 +208,7 @@ def _weighted_histogram_vote(
     # Gaussian-weighted mean of the detected tilts. Normalization cancels.
     for _ in range(GAUSSIAN_REFINEMENT_MAX_ITS):
         log_gaussian_weights = -0.5 * ((detected_tilt - tilt) / sigma) ** 2
-        gaussian_weights = np.exp(log_gaussian_weights - log_gaussian_weights.max())
+        gaussian_weights = np.exp(log_gaussian_weights - np.max(log_gaussian_weights))
         sum_weights = weights * gaussian_weights
         refined = float(np.sum(sum_weights * detected_tilt) / sum_weights.sum())
 
@@ -162,34 +224,57 @@ def _weighted_histogram_vote(
 
 
 def matrix_voting(
-    angles: np.ndarray,
-    valid: np.ndarray,
+    angles: FloatArray,
+    valid: BoolArray,
     voting_bins: int,
     voting_sigma: float,
     max_its: int,
     stopping_tol: float = 0.01,
     eps: float = 1.0e-6,
-) -> np.ndarray:
+) -> FloatArray:
     """
-    Calculate tilt angle of relative orientations with voting for a full array
-    of common line angles, with optional voting weights
+    Estimate a symmetric matrix of relative tilts by iterative soft voting.
+
+    Off-diagonal reliabilities start at one. Each witness k for pair (i, j)
+    receives weight r[i, k] * r[j, k] from the preceding iteration. Gaussian
+    consensus support supplies the next reliability. Updates are synchronous.
 
     Parameters
     ----------
     angles : np.ndarray
-        Measured common-line angles between all image pairs. ``angles[i, j]`` is the
-        angle of the common line between images ``i`` and ``j`` as measured in
-        image ``i``.
+        Square (n, n) array, with n >= 3, of oriented common-line angles in
+        radians. Off-diagonal entries must be real and finite; the diagonal is
+        unused. ``angles[i, j]`` is measured in image i.
     valid : np.ndarray
-        Boolean mask indicating which third images are geometrically valid witnesses
-        for common-line reconstitution. ``valid[i, j, k]`` is True if and only if
-        image k is a valid third image witness for reconstitution of the ``(i, j)``
-        pair.
+        Boolean (n, n, n) mask. For i < j, ``valid[i, j, k]`` selects witness k.
+        Selected witnesses must differ from i and j and satisfy the Euler
+        geometry checks with the same eps. Lower-triangle entries are unused.
+        Shapes and witness validity are assumed, not checked here.
+    voting_bins : int
+        Number of inclusive grid points on [0, pi]; must be at least two.
+    voting_sigma : float
+        Positive, finite Gaussian bandwidth in radians.
+    max_its : int
+        Maximum number of synchronous updates; must be at least one.
+    stopping_tol : float, optional
+        Nonnegative, finite relative reliability tolerance. Stop when the
+        largest off-diagonal change is strictly below this tolerance times
+        the previous largest reliability. Zero disables early stopping.
+    eps : float, optional
+        Geometric tolerance, as in ``alignment_euler_angles``.
 
     Returns
     -------
-    np.ndarray
-        ***
+    FloatArray
+        Symmetric (n, n) tilt matrix in radians, with zero diagonal and
+        off-diagonal values in [0, pi], from the final performed update.
+
+    Notes
+    -----
+    This method is based on the following work:
+    Wang, X., Xu, Y., Zheng, H. et al.
+    Soft-voting for robust common line assessment in cryo-EM angular reconstruction.
+    BMC Bioinformatics (2026). https://doi.org/10.1186/s12859-026-06721-8
     """
     n_images = angles.shape[0]
 
@@ -221,14 +306,21 @@ def matrix_voting(
 
 
 def _voting_iteration(
-    angles: np.ndarray,
-    valid: np.ndarray,
-    reliabilities: np.ndarray,
+    angles: FloatArray,
+    valid: BoolArray,
+    reliabilities: FloatArray,
     *,
     voting_bins: int,
     voting_sigma: float,
     eps: float,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[FloatArray, FloatArray]:
+    """
+    Run one iteration of the soft-voting common-line reconstitution algorithm
+
+    Inputs are not modified. Both outputs are symmetric; tilt has zero
+    diagonal, and reliability has NaN diagonal. Only old reliabilities are
+    read, so pair traversal order does not change the update.
+    """
     n_images = angles.shape[0]
     indices = np.arange(n_images)
     out_tilts = np.empty((n_images, n_images), dtype=np.float64)
