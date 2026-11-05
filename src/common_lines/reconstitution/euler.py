@@ -5,6 +5,8 @@ from common_lines.geometry.euler import EulerAngles
 from .triplets import BoolArray, CommonLineTriplet, FloatArray, broadcast_triplet
 
 EulerPair = tuple[EulerAngles, EulerAngles]
+GAUSSIAN_REFINEMENT_MAX_ITS = 100
+GAUSSIAN_REFINEMENT_TOLERANCE = 1.0e-12
 
 
 def _alignment_geometry(
