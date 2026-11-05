@@ -1,9 +1,11 @@
+import itertools
+
 import numpy as np
 
 from common_lines.geometry.euler import EulerAngles
 from common_lines.types import BoolArray, FloatArray
 
-from .triplets import CommonLineTriplet, broadcast_triplet
+from .triplets import CommonLineAngles, CommonLineTriplet, broadcast_triplet
 
 GAUSSIAN_REFINEMENT_MAX_ITS = 100
 GAUSSIAN_REFINEMENT_TOLERANCE = 1.0e-12
@@ -114,19 +116,154 @@ def vote_tilt(
     if valid.size == 0:
         raise ValueError("At least one triplet is required for voting.")
 
-    histogram_tilt = np.linspace(0.0, np.pi, bins)
     detected_tilt = np.arccos(np.clip(numerator / denominator, -1.0, 1.0)).ravel()
+    tilt, _ = _weighted_histogram_vote(
+        detected_tilt=detected_tilt, bins=bins, sigma=sigma, weights=None
+    )
+    return tilt
+
+
+def _weighted_histogram_vote(
+    detected_tilt: np.ndarray,
+    bins: int,
+    sigma: float,
+    weights: np.ndarray | None = None,
+) -> tuple[float, float]:
+    if weights is None:
+        weights = np.full_like(detected_tilt, fill_value=1.0)
+
+    histogram_tilt = np.linspace(0.0, np.pi, bins)
+
     differences = (detected_tilt[:, np.newaxis] - histogram_tilt) / sigma
-    histogram_height = np.exp(-0.5 * differences**2).sum(axis=0)
+    histogram_height = np.sum(
+        weights[:, None] * np.exp(-0.5 * differences**2),
+        axis=0,
+    )
+
     tilt = float(histogram_tilt[np.argmax(histogram_height)])
 
     # At a stationary point of a Gaussian vote sum, tilt equals the
     # Gaussian-weighted mean of the detected tilts. Normalization cancels.
     for _ in range(GAUSSIAN_REFINEMENT_MAX_ITS):
-        log_weights = -0.5 * ((detected_tilt - tilt) / sigma) ** 2
-        weights = np.exp(log_weights - log_weights.max())
-        refined = float(np.sum(weights * detected_tilt) / weights.sum())
-        if abs(refined - tilt) <= GAUSSIAN_REFINEMENT_TOLERANCE:
-            return refined
+        log_gaussian_weights = -0.5 * ((detected_tilt - tilt) / sigma) ** 2
+        gaussian_weights = np.exp(log_gaussian_weights - log_gaussian_weights.max())
+        sum_weights = weights * gaussian_weights
+        refined = float(np.sum(sum_weights * detected_tilt) / sum_weights.sum())
+
+        change = abs(refined - tilt)
         tilt = refined
-    return tilt
+        if change <= GAUSSIAN_REFINEMENT_TOLERANCE:
+            break
+
+    confidence_gaussian_weights = np.exp(-0.5 * ((detected_tilt - tilt) / sigma) ** 2)
+    confidence = float(np.sum(weights * confidence_gaussian_weights) / weights.sum())
+
+    return tilt, confidence
+
+
+def matrix_voting(
+    angles: np.ndarray,
+    valid: np.ndarray,
+    voting_bins: int,
+    voting_sigma: float,
+    max_its: int,
+    stopping_tol: float = 0.01,
+    eps: float = 1.0e-6,
+) -> np.ndarray:
+    """
+    Calculate tilt angle of relative orientations with voting for a full array
+    of common line angles, with optional voting weights
+
+    Parameters
+    ----------
+    angles : np.ndarray
+        Measured common-line angles between all image pairs. ``angles[i, j]`` is the
+        angle of the common line between images ``i`` and ``j`` as measured in
+        image ``i``.
+    valid : np.ndarray
+        Boolean mask indicating which third images are geometrically valid witnesses
+        for common-line reconstitution. ``valid[i, j, k]`` is True if and only if
+        image k is a valid third image witness for reconstitution of the ``(i, j)``
+        pair.
+
+    Returns
+    -------
+    np.ndarray
+        ***
+    """
+    n_images = angles.shape[0]
+
+    indices = np.arange(n_images)
+    reliabilities = np.full((n_images, n_images), fill_value=1.0)
+    reliabilities[indices, indices] = np.nan
+    off_diagonal = np.ones_like(reliabilities, dtype=bool)
+    off_diagonal[indices, indices] = False
+
+    for _ in range(max_its):
+        tilts, next_reliabilities = _voting_iteration(
+            angles=angles,
+            valid=valid,
+            reliabilities=reliabilities,
+            voting_bins=voting_bins,
+            voting_sigma=voting_sigma,
+            eps=eps,
+        )
+
+        max_change = np.max(
+            np.abs(reliabilities[off_diagonal] - next_reliabilities[off_diagonal])
+        )
+        baseline = np.max(reliabilities[off_diagonal])
+        reliabilities = next_reliabilities
+        if max_change < stopping_tol * baseline:
+            break
+
+    return tilts
+
+
+def _voting_iteration(
+    angles: np.ndarray,
+    valid: np.ndarray,
+    reliabilities: np.ndarray,
+    *,
+    voting_bins: int,
+    voting_sigma: float,
+    eps: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    n_images = angles.shape[0]
+    indices = np.arange(n_images)
+    out_tilts = np.empty((n_images, n_images), dtype=np.float64)
+    out_tilts[indices, indices] = 0.0
+    out_new_reliabilities = np.empty((n_images, n_images), dtype=np.float64)
+    out_new_reliabilities[indices, indices] = np.nan
+
+    def angles_at(i: int | np.ndarray, j: int | np.ndarray) -> CommonLineAngles:
+        return CommonLineAngles(first_rad=angles[i, j], second_rad=angles[j, i])
+
+    for i, j in itertools.combinations(range(n_images), 2):
+        others = indices[valid[i, j]]
+        triplet = CommonLineTriplet(
+            one_with_two=angles_at(i, j),
+            one_with_three=angles_at(i, others),
+            two_with_three=angles_at(j, others),
+        )
+        num, den, _ = _alignment_geometry(triplet, eps=eps)
+        detected_tilts = np.arccos(np.clip(num / den, -1.0, 1.0))
+
+        weights = reliabilities[i, others] * reliabilities[j, others]
+
+        tilt, confidence = _weighted_histogram_vote(
+            detected_tilt=detected_tilts,
+            bins=voting_bins,
+            sigma=voting_sigma,
+            weights=weights,
+        )
+
+        out_new_reliabilities[i, j] = confidence
+        out_new_reliabilities[j, i] = confidence
+        out_tilts[i, j] = tilt
+
+        # Euler angles of the transpose/inverse are rot=-psi, tilt=-tilt, psi=-rot;
+        # rot, -tilt, psi <==> rot + pi, tilt, psi + pi
+        out_tilts[j, i] = tilt
+
+    return out_tilts, out_new_reliabilities
