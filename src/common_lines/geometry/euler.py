@@ -7,6 +7,13 @@ import numpy as np
 
 @dataclass
 class EulerAngles:
+    """
+    Reference-to-image ZYZ angles ``rot``, ``tilt``, and ``psi``, in radians.
+
+    Fields are floating-point scalars or broadcast-compatible arrays.
+    ``euler_zyz_to_matrix`` defines their rotation order and signs; these are
+    coordinate transformations, not active rotations with the same angles.
+    """
     rot: np.ndarray | float
     tilt: np.ndarray | float
     psi: np.ndarray | float

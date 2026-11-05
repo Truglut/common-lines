@@ -18,16 +18,17 @@ See [Rotation convention](#rotation-convention) for more details on the precise 
 
 ## Installation
 
-From the repository root:
+Use Python 3.10 or newer. From the repository root:
 
 ```bash
 pip install .
 ```
 
-For development:
+For development and tests:
 
 ```bash
-pip install -e .
+pip install -e ".[test]"
+python -m pytest
 ```
 
 ## Basic usage
@@ -38,13 +39,16 @@ from common_lines import build_relative_orientations_graph
 graph = build_relative_orientations_graph(images)
 ```
 
-images must be a NumPy array with shape ``(n_images, height, width)`` containing square particle images.
+`images` must be a NumPy array with shape ``(n_images, height, width)`` containing at least three square particle images.
 
 The returned array has shape ``(n_images, n_images, 3, 3)``, and each block ``graph[i, j]`` is a 3D rotation matrix describing the estimated relative orientation between images ``i`` and ``j``.
+Diagonal blocks are identity matrices. The function leaves the input images unchanged; image-file loading and downstream rotation synchronization are performed by the caller.
 
 ## Rotation convention
 
 Rotations are always interpreted as transformations between coordinate systems/change-of-basis matrices.
+
+Image-plane coordinates use ``(x, y) = (column, row)``, with positive y towards increasing row indices. The optional pipeline argument `theta` is in degrees and defaults to `np.arange(0.0, 180.0, 0.5)`.
 
 If ``v_i`` contains the coordinates of a 3D vector in the coordinate system associated with image ``i``, then
 
@@ -65,25 +69,26 @@ If ``R_i`` and ``R_j`` transform coordinates from some common reference system i
 graph[i, j] = R_j @ R_i.T
 ```
 
-Pairwise relative orientations are estimated independently. The graph is not explicitly constrained to satisfy exact inverse or cycle consistency.
+Pairwise relative orientations are estimated independently, then their handedness branches are selected together. The graph is not constrained to satisfy exact inverse or cycle consistency: with noisy data, ``graph[j, i]`` need not equal ``graph[i, j].T``.
 
-For each pair, up to `n_third` geometrically valid third images are sampled
-without replacement. Their tilt estimates cast Gaussian votes with a five-degree
-bandwidth on the interval [0, π]. The largest grid peak is refined continuously
-to avoid rounding the estimated tilt to a bin. The tilt and its negative give
-the two handedness candidates. With the default `n_third=1`, voting retains the
-single triplet estimate; use more third images to obtain a consensus.
-
-The lower-level `estimate_relative_orientation_candidates` function also accepts
-`method="averaging"` to average triplet rotations after aligning their handedness
-branches. Its default is `method="voting"`.
+By default, each pair uses one valid third image (`n_third=1`). Increase `n_third`, up to `n_images - 2`, to combine estimates from more third images. The default combination method is `reconstitution_method="voting"`; `"averaging"` is also available.
 
 ## Handedness ambiguity
 
 Common-line geometry cannot distinguish between two globally mirrored orientation solutions.
 ``build_relative_orientations_graph()`` returns one of these two equivalent handedness solutions.
 
-The opposite solution can be obtained with:
+The pipeline selects compatible hands using `handedness_method="star"` by default. To use the alternative J-synchronization method:
+
+```python
+graph = build_relative_orientations_graph(images, handedness_method="synchronization")
+```
+
+Both methods select between each measured rotation and its mirrored branch trying to ensure full-graph consistency. This resolves edge-handedness choices, but it does not synchronize the full rotations. The methods may choose different branches on noisy data.
+
+The returned global hand is fixed by an automatically selected reference pair.
+However, the two handedness solutions cannot be distinguished from the data, and any choice is therefore arbitrary.
+The opposite, equally valid, solution can be obtained with:
 
 ```python
 from common_lines import mirror_relative_orientations_graph
@@ -184,6 +189,7 @@ handedness_reference = result.handedness_reference
 Normally, a relative orientation is reconstructed using a third image. For some image pairs, no tested third image may produce a valid angular-reconstitution geometry. Rather than failing the complete estimation, the code uses a deterministic pairwise fallback for those edges.
 
 ``used_fallback[i, j]`` indicates whether this occurred for the directed edge from image i to image j.
+Its diagonal is False. This is a fallback indicator, not a confidence score: an edge estimated without fallback can still be inaccurate.
 
 The fallback still respects the same convention:
 

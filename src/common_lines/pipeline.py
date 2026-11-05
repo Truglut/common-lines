@@ -6,6 +6,7 @@ import numpy as np
 from common_lines.centering import PrecenteringMethod, estimate_shifts, shift_images
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.graph_estimation import (
+    HandednessMethod,
     ReconstitutionMethod,
     estimate_relative_orientation_candidates,
     select_consistent_handedness,
@@ -59,6 +60,7 @@ def build_relative_orientations_graph(
     preprocessing_options: PreprocessingOptions | None = None,
     common_line_block_size: int = 4,
     reconstitution_method: ReconstitutionMethod = "averaging",
+    handedness_method: HandednessMethod = "star",
 ) -> np.ndarray:
     """
     Build a graph of relative 3D orientations between all image pairs.
@@ -66,7 +68,8 @@ def build_relative_orientations_graph(
     Parameters
     ----------
     images : np.ndarray
-        Input images with shape ``(n_images, height, width)``.
+        Input images with shape ``(n_images, height, width)``, with at least
+        three square images. The input is unchanged.
     n_third : int
         Maximum number of valid third images used to estimate each ordered pair.
         Must lie in ``[1, n_images - 2]``.
@@ -74,15 +77,17 @@ def build_relative_orientations_graph(
         Seed used to randomize the order in which third images are tested.
     handedness_reference : tuple[int, int], optional
         Ordered image pair used to fix one of the two global handedness
-        solutions. Its first candidate is selected arbitrarily, and the
-        remaining branches are chosen consistently with it.
+        solutions. Its measured rotation fixes the arbitrary global hand, and
+        the remaining edges choose their hands consistently with it.
 
         If ``None``, an edge estimated without fallback is selected
         automatically when possible. If every edge used the fallback, the
         particular reference is irrelevant and ``(0, 1)`` is used.
     theta : np.ndarray, optional
         Angular grid in degrees used to compute the sinograms. If None,
-        ``DEFAULT_THETA`` is used.
+        ``DEFAULT_THETA = np.arange(0.0, 180.0, 0.5)`` is used. Image-plane
+        coordinates are ``(x, y) = (column, row)``, with positive y towards
+        increasing row indices.
     precenter_method : PrecenteringMethod, optional
         Method used to estimate particle translations before common-line
         detection. Options are "center_of_mass" and "reflection".
@@ -100,6 +105,15 @@ def build_relative_orientations_graph(
         Number of images per correlation block in all-pairs common-line
         detection. Larger values may improve throughput but require more memory.
         Default is 4.
+    reconstitution_method : ReconstitutionMethod, optional
+        Method used to combine third-image estimates for each pair: ``"voting"``
+        (default) or ``"averaging"``.
+    handedness_method : HandednessMethod, optional
+        Method used to select compatible edge hands: ``"star"`` (default)
+        aligns them using a reference star; ``"synchronization"`` combines
+        triplet constraints through spectral J-synchronization. Both retain
+        each measured rotation up to reflection and leave full rotation
+        synchronization to downstream processing.
 
     Returns
     -------
@@ -136,6 +150,7 @@ def build_relative_orientations_graph(
         common_line_block_size=common_line_block_size,
         preprocessing_options=preprocessing_options,
         reconstitution_method=reconstitution_method,
+        handedness_method=handedness_method,
     ).graph
 
 
@@ -150,6 +165,7 @@ def build_relative_orientations_graph_with_diagnostics(
     preprocessing_options: PreprocessingOptions | None = None,
     common_line_block_size: int = 4,
     reconstitution_method: ReconstitutionMethod = "averaging",
+    handedness_method: HandednessMethod = "star",
 ) -> OrientationEstimationResult:
     """
     Estimate the directed relative-orientation graph and return diagnostics.
@@ -199,7 +215,7 @@ def build_relative_orientations_graph_with_diagnostics(
     angle_1, angle_2 = common_lines.oriented_angles(theta_array_rad, radians=True)
     del sinograms, common_lines
 
-    candidates, used_fallback = estimate_relative_orientation_candidates(
+    async_graph, used_fallback = estimate_relative_orientation_candidates(
         angle_1,
         angle_2,
         n_third=n_third,
@@ -211,7 +227,9 @@ def build_relative_orientations_graph_with_diagnostics(
     reference_pair = _resolve_handedness_reference(
         used_fallback, requested=handedness_reference
     )
-    graph = select_consistent_handedness(candidates, reference_pair=reference_pair)
+    graph = select_consistent_handedness(
+        async_graph, reference_pair=reference_pair, method=handedness_method
+    )
 
     return OrientationEstimationResult(
         graph=graph,
@@ -282,7 +300,13 @@ def _validate_pipeline_inputs(
 def _resolve_handedness_reference(
     used_fallback: np.ndarray, *, requested: tuple[int, int] | None
 ) -> tuple[int, int]:
-    """Use an informative non-fallback edge as the default handedness reference."""
+    """
+    Return the requested anchor or the first edge estimated without fallback.
+
+    ``used_fallback`` is the directed pair mask from pairwise estimation, and
+    ``requested`` has already been validated by the pipeline. If all edges used
+    the reflection-invariant in-plane fallback, return the arbitrary pair (0, 1).
+    """
     if requested is not None:
         return requested
 

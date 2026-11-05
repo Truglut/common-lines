@@ -1,14 +1,6 @@
 from dataclasses import dataclass
 
 import numpy as np
-from numpy.typing import NDArray
-
-FloatArray = NDArray[np.float64]
-BoolArray = NDArray[np.bool_]
-HANDEDNESS_REFLECTION = np.diag([1.0, 1.0, -1.0])
-RotationTriplet = tuple[FloatArray, FloatArray, FloatArray]
-HandednessPair = tuple[RotationTriplet, RotationTriplet]
-RotationPair = tuple[FloatArray, FloatArray]
 
 
 @dataclass(frozen=True, slots=True)

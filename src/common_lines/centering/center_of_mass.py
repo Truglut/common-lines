@@ -1,7 +1,6 @@
 import numpy as np
 
-from ._validation import _as_single_image, _as_image_batch
-
+from ._validation import _as_image_batch, _as_single_image
 from .shifts import shift_image
 
 
@@ -109,6 +108,33 @@ def compute_center_of_mass_batch(
 def estimate_center_of_mass_shift(
     image: np.ndarray, *, eps: float = 1.0e-6
 ) -> tuple[float, float]:
+    """
+    Estimate the translation that moves an image's intensity center to its center pixel.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        Real-valued array of shape ``(height, width)``. Intensities are used
+        directly as weights; background subtraction and clipping, if needed,
+        must be performed by the caller.
+    eps : float, optional
+        Threshold below which the absolute total intensity is rejected as
+        too close to zero. Default is 1.0e-6.
+
+    Returns
+    -------
+    shift_y, shift_x : float
+        Corrections in pixels, computed as ``(height // 2, width // 2)`` minus
+        the intensity center. Positive values move content towards increasing
+        row or column indices. The target matches the Radon rotation center,
+        including for even image sizes.
+
+    Raises
+    ------
+    ValueError
+        If the image or tolerance is invalid, or the total intensity is too
+        close to zero.
+    """
     image = _as_single_image(image)
     height, width = image.shape
 
@@ -120,6 +146,15 @@ def estimate_center_of_mass_shift(
 def estimate_center_of_mass_shifts(
     images: np.ndarray, *, eps: float = 1.0e-6
 ) -> np.ndarray:
+    """
+    Estimate intensity-based centering corrections for an image batch.
+
+    ``images`` has shape ``(batch, height, width)``. Return a float64 array of
+    shape ``(batch, 2)`` containing ``(shift_y, shift_x)`` in pixels, targeting
+    ``(height // 2, width // 2)``. The input is unchanged. Preprocessing and
+    ``eps`` follow ``estimate_center_of_mass_shift``; an invalid or near-zero
+    total intensity in any image raises ``ValueError`` for the whole batch.
+    """
     images = _as_image_batch(images)
 
     centers = compute_center_of_mass_batch(images, eps=eps)
@@ -131,6 +166,12 @@ def estimate_center_of_mass_shifts(
 def precenter_image_center_of_mass(
     image: np.ndarray, eps: float = 1.0e-6
 ) -> np.ndarray:
+    """Return a centered copy of one ``(height, width)`` image.
+
+    Estimate the correction with ``estimate_center_of_mass_shift`` using the
+    supplied intensities and ``eps``. Apply it with bilinear interpolation and
+    zero padding, as in ``shift_image``. No preprocessing is performed here.
+    """
     image = _as_single_image(image)
     shift_y, shift_x = estimate_center_of_mass_shift(image, eps=eps)
     return shift_image(image, shift_y, shift_x)

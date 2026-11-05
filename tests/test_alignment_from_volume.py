@@ -2,10 +2,10 @@ import numpy as np
 import pytest
 
 from common_lines.detection import CommonLineResult, detect_common_lines
+from common_lines.geometry.handedness import mirror_transformation_matrices
 from common_lines.radon import batch_common_line_sinograms
 from common_lines.reconstitution.matrix import (
     compute_transformation_matrices,
-    mirror_transformation_matrices,
 )
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 
@@ -54,7 +54,7 @@ def _solve_detected_triplet(
     angle_13_in_1, angle_13_in_3 = _oriented_pair(detected[1], theta_deg)
     angle_23_in_2, angle_23_in_3 = _oriented_pair(detected[2], theta_deg)
 
-    return compute_transformation_matrices(
+    direct = compute_transformation_matrices(
         CommonLineTriplet(
             one_with_two=CommonLineAngles(
                 first_rad=np.deg2rad(angle_12_in_1),
@@ -70,6 +70,8 @@ def _solve_detected_triplet(
             ),
         )
     )
+
+    return direct, mirror_transformation_matrices(direct)
 
 
 def _assert_rotation_matrix(R: np.ndarray, *, atol: float = 1.0e-12) -> None:
@@ -281,15 +283,16 @@ def test_detect_common_lines_keeps_compact_array_outputs_for_a_single_pair():
     assert angle_2.shape == (1,)
 
 
-def test_hand_checkable_orthogonal_common_lines_return_both_handednesses():
+def test_hand_checkable_orthogonal_common_lines_and_their_mirror():
     """Exact common-line angles give the expected solution and its mirror."""
-    direct, mirrored = compute_transformation_matrices(
+    direct = compute_transformation_matrices(
         CommonLineTriplet(
             one_with_two=CommonLineAngles(first_rad=0.0, second_rad=0.0),
             one_with_three=CommonLineAngles(first_rad=np.pi / 2, second_rad=0.0),
             two_with_three=CommonLineAngles(first_rad=np.pi / 2, second_rad=np.pi / 2),
         )
     )
+    mirrored = mirror_transformation_matrices(direct)
     expected = (EXPECTED_R1, EXPECTED_R2, EXPECTED_R3)
     expected_mirrored = mirror_transformation_matrices(expected)
 

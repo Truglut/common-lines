@@ -1,6 +1,6 @@
 """Estimate relative orientations from common lines in cryo-EM images."""
 
-from .graph_estimation import mirror_relative_orientations_graph
+from .geometry.handedness import mirror_relative_orientations_graph
 from .pipeline import (
     OrientationEstimationResult,
     build_relative_orientations_graph,

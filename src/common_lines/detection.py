@@ -39,7 +39,7 @@ class CommonLineResult:
         self, theta_1: np.ndarray, theta_2: np.ndarray, radians: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Convert the stored indices into oriented angular matrices.
+        Convert the stored indices into oriented angles for the compared pairs.
 
         Parameters
         ----------
@@ -54,8 +54,10 @@ class CommonLineResult:
         Returns
         -------
         angle_1, angle_2
-            Arrays with shape ``(n_images, )``. For reversed matches,
-            180 degrees is added to ``angle_2`` modulo 360 degrees.
+            Arrays with one entry per compared pair. For reversed matches,
+            half a turn is added to ``angle_2`` modulo a full turn, in the
+            selected units. ``radians`` specifies the grid's units; it does
+            not convert a degree-valued grid to radians.
         """
         theta_1 = np.asarray(theta_1)
         theta_2 = np.asarray(theta_2)
@@ -79,6 +81,9 @@ class CommonLineGraph:
     Common-line results for all image pairs.
 
     The stored arrays have shape ``(n_images, n_images)``.
+    Self-pairs have no defined common line: their index is 0, correlation is
+    NaN, and reversal flag (when present) is False. Ignore diagonal entries
+    when interpreting the returned angles.
 
     Attributes
     ----------
@@ -111,6 +116,22 @@ class CommonLineGraph:
 
         For pair ``(i, j)``, the returned angles correspond to the common
         line expressed in images ``i`` and ``j``, respectively.
+
+        Parameters
+        ----------
+        theta : np.ndarray
+            Angular grid of shape ``(n_angles,)`` used to generate the sinograms.
+        radians : bool, optional
+            If True, the grid and outputs are in radians; otherwise they are
+            in degrees (default). This flag does not convert the input grid.
+
+        Returns
+        -------
+        angle_1, angle_2 : numpy.ndarray
+            Arrays of shape ``(n_images, n_images)``. Each reversed match adds
+            half a turn to ``angle_2``, modulo a full turn in the selected units.
+            These oriented angles include the detector-reversal correction
+            needed by angular reconstitution.
         """
         theta = np.asarray(theta)
         _validate_theta(theta, self.n_angles, "theta")

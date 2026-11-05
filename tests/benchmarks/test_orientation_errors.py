@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from common_lines.reconstitution.triplets import HANDEDNESS_REFLECTION
+from common_lines.geometry.handedness import HANDEDNESS_REFLECTION
 from scripts.orientation_errors import (
     evaluate_aggregated_pairs,
     evaluate_triplet,

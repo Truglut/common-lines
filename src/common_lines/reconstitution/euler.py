@@ -1,10 +1,10 @@
 import numpy as np
 
 from common_lines.geometry.euler import EulerAngles
+from common_lines.types import BoolArray, FloatArray
 
-from .triplets import BoolArray, CommonLineTriplet, FloatArray, broadcast_triplet
+from .triplets import CommonLineTriplet, broadcast_triplet
 
-EulerPair = tuple[EulerAngles, EulerAngles]
 GAUSSIAN_REFINEMENT_MAX_ITS = 100
 GAUSSIAN_REFINEMENT_TOLERANCE = 1.0e-12
 
@@ -51,6 +51,13 @@ def valid_euler_triplets(triplet: CommonLineTriplet, eps: float = 1.0e-6) -> Boo
 def rot_psi_from_angle_pair(
     angle_1: FloatArray | float, angle_2: FloatArray | float
 ) -> tuple[FloatArray | float, FloatArray | float]:
+    """Return ZYZ in-plane angles from an oriented pair of common-line angles.
+
+    Inputs are radians in image 1 and image 2. Return
+    ``(angle_1 - pi/2, pi/2 - angle_2)`` without wrapping, using the convention
+    of ``euler_zyz_to_matrix``. Scalars and NumPy arrays are accepted. The tilt
+    remains undetermined by this pair and must be obtained from a third image.
+    """
     quarter_turn = np.pi / 2
 
     return angle_1 - quarter_turn, quarter_turn - angle_2
@@ -58,9 +65,9 @@ def rot_psi_from_angle_pair(
 
 def alignment_euler_angles(
     triplet: CommonLineTriplet, eps: float = 1.0e-6
-) -> EulerPair:
+) -> EulerAngles:
     """
-    Return direct and mirrored image-1-to-image-2 Euler angles in radians.
+    Return one arbitrary-handed image-1-to-image-2 Euler estimate in radians.
 
     All six input angles broadcast together; each Euler field has that shape.
     Negating the tilt gives the opposite handedness. ``eps`` bounds both
@@ -81,10 +88,7 @@ def alignment_euler_angles(
     rot, psi = rot_psi_from_angle_pair(
         triplet.one_with_two.first_rad, triplet.one_with_two.second_rad
     )
-    direct = EulerAngles(rot=rot, tilt=tilt, psi=psi)
-    mirrored = EulerAngles(rot=direct.rot, tilt=-direct.tilt, psi=direct.psi)
-
-    return direct, mirrored
+    return EulerAngles(rot=rot, tilt=tilt, psi=psi)
 
 
 def vote_tilt(

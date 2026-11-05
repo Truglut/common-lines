@@ -4,11 +4,18 @@ from typing import Literal
 
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from common_lines.geometry.euler import EulerAngles, euler_zyz_to_matrix
-from common_lines.graph_estimation import pairwise_orientation
-from common_lines.reconstitution.euler import EulerPair
-from common_lines.reconstitution.triplets import BoolArray, CommonLineTriplet
+from common_lines.geometry.forward import compute_intrinsic_common_line_angles
+from common_lines.geometry.handedness import (
+    HANDEDNESS_REFLECTION,
+    mirror_relative_orientations_graph,
+)
+from common_lines.graph_estimation import ReconstitutionMethod, pairwise_orientation
+from common_lines.reconstitution.matrix import get_transformation_for_second_image
+from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
+from common_lines.types import BoolArray
 
 
 def _image_plane_direction(angle_deg: float) -> np.ndarray:
@@ -37,10 +44,11 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
         )
     )
     np.testing.assert_array_equal(used_fallback, ~np.eye(2, dtype=bool))
-    direct, mirrored = candidates[0, 1]
+    assert candidates.shape == (2, 2, 3, 3)
+    direct = candidates[0, 1]
 
     _assert_rotation_matrix(direct)
-    assert np.allclose(mirrored, direct)
+    assert np.allclose(HANDEDNESS_REFLECTION @ direct @ HANDEDNESS_REFLECTION, direct)
 
     common_line_1 = _image_plane_direction(theta_1_deg)
     common_line_2 = _image_plane_direction(theta_2_deg)
@@ -84,10 +92,10 @@ def test_graph_filters_and_samples_reproducibly(
         calls[i, j] = third.copy()
         return 0.1 * third
 
-    def estimates(triplet: CommonLineTriplet) -> EulerPair:
+    def estimates(triplet: CommonLineTriplet) -> EulerAngles:
         tilt = record_selection(triplet)
         zero = np.zeros_like(tilt)
-        return EulerAngles(zero, tilt, zero), EulerAngles(zero, -tilt, zero)
+        return EulerAngles(zero, tilt, zero)
 
     def vote(triplet: CommonLineTriplet, bins: int, sigma: float) -> float:
         return float(np.mean(record_selection(triplet)))
@@ -130,7 +138,7 @@ def test_graph_filters_and_samples_reproducibly(
     np.testing.assert_array_equal(repeated, candidates)
     np.testing.assert_array_equal(repeated_fallback, fallback)
 
-    def broken_solver(triplet: CommonLineTriplet, **kwargs: object) -> EulerPair:
+    def broken_solver(triplet: CommonLineTriplet, **kwargs: object) -> EulerAngles:
         raise ValueError("programming error")
 
     monkeypatch.setattr(
@@ -163,4 +171,63 @@ def test_voting_uses_a_five_degree_bandwidth() -> None:
     )
     assert not fallback[0, 1]
     expected = euler_zyz_to_matrix(EulerAngles(-np.pi / 2, np.pi / 3, np.pi / 2))
-    np.testing.assert_allclose(candidates[0, 1, 0], expected, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(candidates[0, 1], expected, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("method", ["averaging", "voting"])
+def test_all_degenerate_triplets_use_identity_fallback(
+    method: ReconstitutionMethod,
+) -> None:
+    candidates, fallback = (
+        pairwise_orientation.estimate_relative_orientation_candidates(
+            np.zeros((3, 3)), np.zeros((3, 3)), n_third=3, random_seed=4, method=method
+        )
+    )
+    np.testing.assert_array_equal(fallback, ~np.eye(3, dtype=bool))
+    np.testing.assert_allclose(candidates, np.broadcast_to(np.eye(3), candidates.shape))
+
+
+@pytest.mark.parametrize("method", ["averaging", "voting"])
+def test_pairwise_candidates_match_matrix_solver_up_to_handedness(
+    method: ReconstitutionMethod,
+) -> None:
+    rng = np.random.default_rng(12)
+    frames = Rotation.random(3, random_state=rng).as_matrix()
+    first, second = compute_intrinsic_common_line_angles(
+        frames[:, None], frames[None, :]
+    )
+    noisy_first = first + rng.normal(0, 0.04, first.shape)
+    noisy_second = second + rng.normal(0, 0.04, second.shape)
+
+    for angle_1, angle_2 in [(first, second), (noisy_first, noisy_second)]:
+        actual, fallback = (
+            pairwise_orientation.estimate_relative_orientation_candidates(
+                angle_1, angle_2, n_third=1, random_seed=4, method=method
+            )
+        )
+        # Three images give one triplet per edge, so the public matrix solver
+        # provides an independent oracle without reproducing graph averaging.
+        assert not fallback.any()
+        expected = np.empty_like(actual)
+        for i in range(3):
+            expected[i, i] = np.eye(3)
+            for j in range(3):
+                if i == j:
+                    continue
+                k = 3 - i - j
+                triplet = CommonLineTriplet(
+                    CommonLineAngles(angle_1[i, j], angle_2[i, j]),
+                    CommonLineAngles(angle_1[i, k], angle_2[i, k]),
+                    CommonLineAngles(angle_1[j, k], angle_2[j, k]),
+                )
+                expected[i, j] = get_transformation_for_second_image(triplet)
+        assert actual.shape == (3, 3, 3, 3)
+        # The solvers can choose different hands independently on each edge.
+        edge_errors = np.minimum(
+            np.max(np.abs(actual - expected), axis=(-2, -1)),
+            np.max(
+                np.abs(actual - mirror_relative_orientations_graph(expected)),
+                axis=(-2, -1),
+            ),
+        )
+        np.testing.assert_allclose(edge_errors, 0.0, rtol=0, atol=1e-11)

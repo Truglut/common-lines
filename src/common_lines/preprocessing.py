@@ -32,10 +32,17 @@ class PreprocessingOptions:
         preprocessing steps.
         Default is False.
     background_mask : np.ndarray, optional
-        Mask used for the background level estimation. Default is None.
+        Weights in [0, 1] used for background estimation, with the same shape
+        choices as ``mask``. Each image must have positive total background
+        weight. If omitted, use ``1.0 - mask``; background subtraction therefore
+        requires either this mask or ``mask``. Default is None.
     clip_negative : bool, optional
         If True, any negative values in the images will be clipped to zero.
         Default is False.
+    gaussian_lowpass_sigma : float, optional
+        Standard deviation in pixels for Gaussian smoothing along the two
+        spatial axes, applied before background estimation. Images are never
+        smoothed across the batch axis. None disables smoothing (default).
     """
 
     mask: np.ndarray | None = None
@@ -70,6 +77,10 @@ def preprocess_images(
     """
     Preprocess an image batch.
 
+    Apply optional Gaussian smoothing, background subtraction, negative-value
+    clipping, and masking, in that order. Each image is processed independently;
+    no per-image intensity normalization is applied.
+
     Parameters
     ----------
     images : np.ndarray
@@ -82,7 +93,8 @@ def preprocess_images(
     Returns
     -------
     np.ndarray
-        Preprocessed images.
+        New float64 array with the same shape as the input. The input is
+        unchanged. Even with ``options=None``, return a float64 copy.
     """
     processed = images.astype(dtype=np.float64, copy=True)
 
@@ -132,6 +144,7 @@ def _get_background_mask(
     background_mask: np.ndarray | None,
     image_batch_shape: tuple[int, int, int],
 ) -> np.ndarray | None:
+    """Prepare explicit background weights, or the complement of the image mask."""
     if not subtract_background:
         return None
 
@@ -147,6 +160,7 @@ def _get_background_mask(
 def _prepare_mask(
     mask: np.ndarray, *, image_batch_shape: tuple[int, int, int]
 ) -> np.ndarray:
+    """Validate weights in [0, 1] and broadcast a shared mask over the image batch."""
     mask = np.asarray(mask, dtype=np.float64)
 
     _, height, width = image_batch_shape

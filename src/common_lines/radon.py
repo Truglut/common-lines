@@ -223,10 +223,34 @@ def batch_common_line_sinograms(
 
         (cos(theta), sin(theta)).
 
-    The lower-level batch_radon function follows the skimage-compatible rotation
+    The lower-level ``_batch_radon`` function follows the skimage-compatible rotation
     convention, so the sign is converted here in one place. Angles in [0, 180)
     describe the unoriented lines; profile reversal can later be represented by
     adding 180 degrees to the corresponding angle.
+
+    Parameters
+    ----------
+    images : np.ndarray
+        Single image of shape ``(height, width)`` or batch with shape
+        ``(batch, height, width)``. The rotation center is the pixel at index
+        ``size // 2`` along each axis of the prepared square image.
+    theta : np.ndarray, optional
+        One-dimensional angular grid in degrees. Default is ``np.arange(180)``
+        (one-degree spacing), distinct from the pipeline's half-degree grid.
+    circle : bool, optional
+        If True (default), center-crop rectangular images to a square of side
+        ``min(height, width)``. Otherwise, pad to accommodate the rotated image.
+    warn_if_nonzero_outside_circle : bool, optional
+        Warn about nonzero values outside the inscribed circle when
+        ``circle=True``. Default is False.
+
+    Returns
+    -------
+    numpy.ndarray
+        Sinogram of shape ``(detector_size, len(theta))`` for a single image,
+        or ``(batch, detector_size, len(theta))`` for a batch. Floating-point
+        inputs retain their precision; other inputs are converted to float64.
+        The input is unchanged.
     """
     if theta is None:
         theta = np.arange(180.0)

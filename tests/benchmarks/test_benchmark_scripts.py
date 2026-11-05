@@ -300,8 +300,9 @@ def test_public_pipeline_with_exact_detected_common_lines(monkeypatch):
 
 
 @pytest.mark.parametrize("method", ["averaging", "voting"])
-def test_pipeline_cli_passes_and_records_reconstitution_method(
-    tmp_path, monkeypatch, method
+@pytest.mark.parametrize("handedness", ["star", "synchronization"])
+def test_pipeline_cli_passes_and_records_methods(
+    tmp_path, monkeypatch, method, handedness
 ):
     import json
     from types import SimpleNamespace
@@ -315,6 +316,7 @@ def test_pipeline_cli_passes_and_records_reconstitution_method(
 
     def estimate(images, **kwargs):
         assert kwargs["reconstitution_method"] == method
+        assert kwargs["handedness_method"] == handedness
         return SimpleNamespace(
             graph=true_graph(matrices),
             used_fallback=np.zeros((4, 4), dtype=bool),
@@ -332,6 +334,8 @@ def test_pipeline_cli_passes_and_records_reconstitution_method(
             str(metadata),
             "--reconstitution-method",
             method,
+            "--handedness-method",
+            handedness,
             "--output",
             str(prefix),
         ],
@@ -340,3 +344,4 @@ def test_pipeline_cli_passes_and_records_reconstitution_method(
     with np.load(prefix.with_suffix(".npz")) as data:
         configuration = json.loads(str(data["run_configuration_json"]))
     assert configuration["reconstitution_method"] == method
+    assert configuration["handedness_method"] == handedness
