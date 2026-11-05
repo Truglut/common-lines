@@ -58,7 +58,7 @@ def build_relative_orientations_graph(
     precenter_method: PrecenteringMethod | None = None,
     preprocessing_options: PreprocessingOptions | None = None,
     common_line_block_size: int = 4,
-    reconstitution_method: ReconstitutionMethod = "voting",
+    reconstitution_method: ReconstitutionMethod = "averaging",
 ) -> np.ndarray:
     """
     Build a graph of relative 3D orientations between all image pairs.
@@ -149,7 +149,7 @@ def build_relative_orientations_graph_with_diagnostics(
     precenter_method: PrecenteringMethod | None = None,
     preprocessing_options: PreprocessingOptions | None = None,
     common_line_block_size: int = 4,
-    reconstitution_method: ReconstitutionMethod = "voting",
+    reconstitution_method: ReconstitutionMethod = "averaging",
 ) -> OrientationEstimationResult:
     """
     Estimate the directed relative-orientation graph and return diagnostics.
