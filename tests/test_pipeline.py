@@ -8,7 +8,11 @@ from scipy.spatial.transform import Rotation
 from common_lines import SoftVotingOptions, pipeline
 from common_lines.detection import CommonLineGraph
 from common_lines.geometry.forward import compute_intrinsic_common_line_angles
-from common_lines.graph_estimation import HandednessMethod, pairwise_orientation
+from common_lines.graph_estimation import (
+    HandednessMethod,
+    ReconstitutionMethod,
+    pairwise_orientation,
+)
 from common_lines.graph_estimation import handedness as graph_handedness
 
 
@@ -58,8 +62,10 @@ def _patch_pipeline_to_force_fallback(
     return angle_1, angle_2
 
 
+@pytest.mark.parametrize("method", ["averaging", "soft_voting"])
 def test_pipeline_diagnostics_report_fallback_edges(
     monkeypatch: pytest.MonkeyPatch,
+    method: ReconstitutionMethod,
 ) -> None:
     angle_1, angle_2 = _patch_pipeline_to_force_fallback(monkeypatch)
 
@@ -69,11 +75,13 @@ def test_pipeline_diagnostics_report_fallback_edges(
         theta=np.array([0.0, 90.0]),
         n_third=1,
         precenter_method=None,
+        reconstitution_method=method,
     )
 
     expected_fallback_mask = ~np.eye(3, dtype=bool)
     assert np.array_equal(result.used_fallback, expected_fallback_mask)
     assert result.handedness_reference == (0, 1)
+    assert np.isfinite(result.graph).all()
 
     for i in range(3):
         assert np.allclose(result.graph[i, i], np.eye(3))
@@ -190,9 +198,11 @@ def test_soft_voting_pipeline_preserves_reversals_and_options(
 
 
 @pytest.mark.parametrize("handedness_method", get_args(HandednessMethod))
+@pytest.mark.parametrize("method", ["averaging", "soft_voting"])
 def test_fallback_and_reconstitution_edges_share_i_to_j_convention(
     monkeypatch: pytest.MonkeyPatch,
     handedness_method: HandednessMethod,
+    method: ReconstitutionMethod,
 ) -> None:
     """Fallback and reconstructed edges must use the same graph convention."""
     frames = Rotation.from_euler(
@@ -214,6 +224,7 @@ def test_fallback_and_reconstitution_edges_share_i_to_j_convention(
         n_third=2,
         random_seed=4,
         handedness_method=handedness_method,
+        reconstitution_method=method,
     )
 
     expected_fallback = np.zeros((4, 4), dtype=bool)

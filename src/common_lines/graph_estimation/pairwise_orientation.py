@@ -44,7 +44,9 @@ def _average_handedness_branches(
     return nearest_rotation(np.mean(selected, axis=0))
 
 
-def _estimate_pairwise_fallback(theta_1_rad: float, theta_2_rad: float) -> np.ndarray:
+def _estimate_pairwise_fallback(
+    theta_1_rad: float | np.ndarray, theta_2_rad: float | np.ndarray
+) -> np.ndarray:
     """
     Return a canonical relative orientation from one pairwise common line.
 
@@ -56,15 +58,16 @@ def _estimate_pairwise_fallback(theta_1_rad: float, theta_2_rad: float) -> np.nd
 
     Parameters
     ----------
-    theta_1_rad : float
-        Oriented common-line angle in image 1, in radians.
-    theta_2_rad : float
-        Corresponding oriented common-line angle in image 2, in radians.
+    theta_1_rad, theta_2_rad : float | np.ndarray
+        Angles of the same oriented common line in images 1 and 2, in radians.
+        Scalars or arrays are accepted; their shapes must broadcast together.
 
     Returns
     -------
     numpy.ndarray
-        Canonical rotation mapping coordinates from image 1 to image 2.
+        Canonical rotations mapping coordinates from image 1 to image 2, with
+        shape ``broadcast_shape + (3, 3)``. Scalar inputs give shape (3, 3).
+        Empty batches are accepted. Inputs are not modified.
 
     Notes
     -----
@@ -74,14 +77,14 @@ def _estimate_pairwise_fallback(theta_1_rad: float, theta_2_rad: float) -> np.nd
     cos_delta = np.cos(delta_rad)
     sin_delta = np.sin(delta_rad)
 
-    rotation = np.array(
-        [
-            [cos_delta, -sin_delta, 0.0],
-            [sin_delta, cos_delta, 0.0],
-            [0.0, 0.0, 1.0],
-        ],
-        dtype=np.float64,
-    )
+    rotation = np.zeros(np.shape(delta_rad) + (3, 3), dtype=np.float64)
+
+    rotation[..., 0, 0] = cos_delta
+    rotation[..., 0, 1] = -sin_delta
+    rotation[..., 1, 0] = sin_delta
+    rotation[..., 1, 1] = cos_delta
+    rotation[..., 2, 2] = 1.0
+
     return rotation
 
 
@@ -132,15 +135,15 @@ def estimate_relative_orientation_candidates(
     numpy.ndarray
         Boolean array with shape ``(n_images, n_images)`` indicating for each directed
         image pair, whether a fallback was used due to not finding a valid third
-        image for the angular reconstitution algorithm. Always False on a
-        successful "soft_voting" call, which raises for unsupported pairs.
+        image for the angular reconstitution algorithm. For "soft_voting",
+        this also includes pairs without positive-weight witness support in
+        the final update. The diagonal is False.
 
     Raises
     ------
     ValueError
-        If the method or its settings are invalid, or if "soft_voting" finds
-        a pair without a geometrically valid positive-weight witness. Soft
-        voting currently does not use the pairwise fallback.
+        If the method or its settings are invalid. Unsupported pairs use the
+        canonical in-plane fallback for all methods.
     """
     if method not in ("averaging", "voting", "soft_voting"):
         raise ValueError("method must be 'averaging', 'voting', or 'soft_voting'.")
@@ -156,21 +159,29 @@ def estimate_relative_orientation_candidates(
     image_indices = np.arange(n_images)
     candidates = np.empty((n_images, n_images, 3, 3), dtype=np.float64)
     candidates[image_indices, image_indices] = np.eye(3)
-    used_fallback = np.zeros((n_images, n_images), dtype=bool)
 
     if method == "soft_voting":
         options = (
             SoftVotingOptions() if soft_voting_options is None else soft_voting_options
         )
-        tilts = soft_vote_tilts(angle_1, angle_2, options=options)
-        off_diagonal = ~np.eye(n_images, dtype=bool)
-        rot, psi = rot_psi_from_angle_pair(angle_1[off_diagonal], angle_2[off_diagonal])
-        angles = EulerAngles(rot=rot, tilt=tilts[off_diagonal], psi=psi)
-        candidates[off_diagonal] = euler_zyz_to_matrix(angles)
+        voting_results = soft_vote_tilts(angle_1, angle_2, options=options)
+        supported_tilts = voting_results.tilts[voting_results.supported]
+        rot, psi = rot_psi_from_angle_pair(
+            angle_1[voting_results.supported], angle_2[voting_results.supported]
+        )
+        angles = EulerAngles(rot=rot, tilt=supported_tilts, psi=psi)
+        candidates[voting_results.supported] = euler_zyz_to_matrix(angles)
 
-        return candidates, used_fallback
+        need_fallback = ~voting_results.supported
+        need_fallback[image_indices, image_indices] = False
+        candidates[need_fallback] = _estimate_pairwise_fallback(
+            angle_1[need_fallback], angle_2[need_fallback]
+        )
+
+        return candidates, need_fallback
 
     rng = np.random.default_rng(random_seed)
+    used_fallback = np.zeros((n_images, n_images), dtype=bool)
 
     def pair_at(i: int | np.ndarray, j: int | np.ndarray) -> CommonLineAngles:
         return CommonLineAngles(first_rad=angle_1[i, j], second_rad=angle_2[i, j])

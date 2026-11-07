@@ -40,7 +40,8 @@ class OrientationEstimationResult:
     used_fallback: numpy.ndarray
         Boolean array of shape ``(n_images, n_images)``, indicating image pairs
         where the estimated relative orientation was resolved using a fallback
-        method after no valid third image was found for angular reconstitution.
+        method after no valid third image was found for angular reconstitution
+        or, for soft voting, no positive-weight witness support remained.
     handedness_reference: tuple[int, int]
         Image pair used to fix one consistent handedness for the whole graph.
     """
@@ -142,10 +143,10 @@ def build_relative_orientations_graph(
     -----
     Soft voting couples tilt estimates through shared reliability updates;
     the other methods estimate pairs independently. The graph is not forced
-    to satisfy inverse or cycle consistency. Soft voting raises ValueError
-    identifying a pair without valid positive-weight support; fallback for
-    this method is not yet implemented. Successful soft-voting calls mark no
-    edges as fallback.
+    to satisfy inverse or cycle consistency. All methods use the canonical
+    in-plane fallback for unsupported pairs. With soft voting, support is
+    determined from valid geometry and positive witness weights in the final
+    update; fallback rotations do not contribute to reliability updates.
 
     The opposite, equally valid global solution is obtained by conjugating every
     graph block with ``HANDEDNESS_REFLECTION``. This can be done with the
@@ -190,9 +191,9 @@ def build_relative_orientations_graph_with_diagnostics(
 
     With reconstitution_method="soft_voting", all valid witnesses are used;
     n_third and random_seed are ignored. soft_voting_options customizes the
-    update parameters, or None uses the defaults. Unsupported pairs raise
-    ValueError rather than using fallback; successful calls return an all-False
-    used_fallback mask.
+    update parameters, or None uses the defaults. Pairs without valid positive-
+    weight witnesses in the final update use the canonical in-plane fallback
+    and are marked in used_fallback.
 
     The graph follows the same convention as
     ``build_relative_orientations_graph``:

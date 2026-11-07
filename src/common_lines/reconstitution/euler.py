@@ -43,6 +43,35 @@ class SoftVotingOptions:
     stopping_tol: float = 0.01
 
 
+@dataclass
+class SoftVotingResult:
+    """
+    Partial pairwise estimates from one synchronous soft-voting update.
+
+    All fields have shape (n_images, n_images) and are symmetric. Support
+    describes the final update's witness geometry and incoming reliability
+    weights, not an accuracy guarantee or a confidence threshold.
+
+    Attributes
+    ----------
+    tilts: FloatArray
+        Estimated angles in [0, pi], in radians. Unsupported off-diagonal
+        entries are NaN; the diagonal is zero.
+    reliabilities: FloatArray
+        Gaussian agreement scores in [0, 1]. Unsupported off-diagonal entries
+        are zero; the unused diagonal is NaN. These scores supply witness
+        weights in the next update. Fallback rotations never supply evidence.
+    supported: BoolArray
+        True where at least one geometrically valid positive-weight witness
+        contributed. Unsupported estimates must be ignored or replaced by
+        fallbacks. The diagonal is False because self-pairs are unused.
+    """
+
+    tilts: FloatArray
+    reliabilities: FloatArray
+    supported: BoolArray
+
+
 def _alignment_geometry(
     triplet: CommonLineTriplet, eps: float
 ) -> tuple[FloatArray, FloatArray, BoolArray]:
@@ -260,7 +289,7 @@ def soft_vote_tilts(
     angle_2: FloatArray,
     options: SoftVotingOptions,
     eps: float = 1.0e-6,
-) -> FloatArray:
+) -> SoftVotingResult:
     """
     Estimate a symmetric matrix of relative tilts by iterative soft voting.
 
@@ -285,23 +314,30 @@ def soft_vote_tilts(
 
     Returns
     -------
-    FloatArray
-        Symmetric (n, n) tilt matrix in radians, with zero diagonal and
-        off-diagonal values in [0, pi], from the final performed update.
+    SoftVotingResult
+        Tilts, reliabilities, and support mask from the final performed update.
+        Pairs without valid positive-weight witnesses have NaN tilt, zero
+        reliability, and False support. See ``SoftVotingResult`` for diagonals.
 
     Raises
     ------
     ValueError
-        If options.max_its is non-positive or any pair has no geometrically valid
-        positive-weight witness. Unsupported-pair errors identify the pair.
+        If options.max_its is non-positive.
 
     Notes
     -----
     Every other image is considered as a witness for each unordered pair.
-    Geometry is calculated once per pair per iteration; invalid witnesses are
-    filtered before calculating tilts. No validity cube is stored. Inputs are
-    unchanged. Shapes, finite values, and the remaining option bounds are
-    assumed valid. Convergence is not guaranteed; options.max_its caps the work.
+    Zero-weight witnesses are excluded before calculating geometry; invalid
+    geometry is filtered before calculating tilts. No validity cube is stored.
+    Support is reconsidered on every update. Zero reliabilities remain in the
+    convergence calculation; only the diagonal is excluded. Even an entirely
+    unsupported input returns partial results, rather than raising. With a
+    zero reliability baseline, the strict stopping inequality is never met
+    and the iteration cap applies.
+
+    Inputs are unchanged. Shapes, finite values, and the remaining option
+    bounds are assumed valid. Convergence is not guaranteed; options.max_its
+    caps the work.
 
     This method is based on the following work:
     Wang, X., Xu, Y., Zheng, H. et al.
@@ -316,11 +352,10 @@ def soft_vote_tilts(
     indices = np.arange(n_images)
     reliabilities = np.full((n_images, n_images), fill_value=1.0)
     reliabilities[indices, indices] = np.nan
-    off_diagonal = np.ones_like(reliabilities, dtype=bool)
-    off_diagonal[indices, indices] = False
+    off_diagonal = ~np.eye(n_images, dtype=bool)
 
     for _ in range(options.max_its):
-        tilts, next_reliabilities = _voting_iteration(
+        results = _voting_iteration(
             angle_1=angle_1,
             angle_2=angle_2,
             reliabilities=reliabilities,
@@ -329,15 +364,14 @@ def soft_vote_tilts(
             eps=eps,
         )
 
-        max_change = np.max(
-            np.abs(reliabilities[off_diagonal] - next_reliabilities[off_diagonal])
-        )
-        baseline = np.max(reliabilities[off_diagonal])
-        reliabilities = next_reliabilities
+        previous = reliabilities[off_diagonal]
+        max_change = np.max(np.abs(previous - results.reliabilities[off_diagonal]))
+        baseline = np.max(previous)
+        reliabilities = results.reliabilities
         if max_change < options.stopping_tol * baseline:
             break
 
-    return tilts
+    return results
 
 
 def _voting_iteration(
@@ -348,7 +382,7 @@ def _voting_iteration(
     voting_bins: int,
     voting_sigma: float,
     eps: float,
-) -> tuple[FloatArray, FloatArray]:
+) -> SoftVotingResult:
     """
     Run one synchronous iteration of soft-voting common-line reconstitution.
 
@@ -359,16 +393,16 @@ def _voting_iteration(
     as in ``SoftVotingOptions``; eps follows ``alignment_euler_angles``.
 
     For each unordered pair, all other images are considered as witnesses.
-    Geometry and tilt candidates are calculated together, retaining only
-    geometrically valid witnesses with positive incident-reliability products.
-    No validity cube is stored. A pair without support raises ValueError
-    identifying its indices.
+    Witnesses with zero incident-reliability products are removed before
+    calculating geometry. Valid geometry then supplies tilt candidates.
+    No validity cube is stored. Pairs without support receive NaN tilt, zero
+    reliability, and False support; they do not abort the update.
 
-    Return freshly allocated tilt and confidence matrices. Both are symmetric;
-    tilt has zero diagonal, and confidence has NaN diagonal. Confidence is the
-    normalized Gaussian support defined by ``_weighted_histogram_vote`` and
-    supplies the next reliability. Inputs are not modified. Only old
-    reliabilities are read, so pair traversal order does not change the update.
+    Return a ``SoftVotingResult`` with freshly allocated, symmetric arrays.
+    Confidence is the normalized Gaussian support defined by
+    ``_weighted_histogram_vote`` and supplies the next reliability. Inputs are
+    not modified. Only old reliabilities are read, so pair traversal order
+    does not change the update.
     """
     n_images = angle_1.shape[0]
     indices = np.arange(n_images)
@@ -376,6 +410,7 @@ def _voting_iteration(
     out_tilts[indices, indices] = 0.0
     out_new_reliabilities = np.empty((n_images, n_images), dtype=np.float64)
     out_new_reliabilities[indices, indices] = np.nan
+    out_supported = np.zeros((n_images, n_images), dtype=bool)
 
     def angles_at(i: int | np.ndarray, j: int | np.ndarray) -> CommonLineAngles:
         return CommonLineAngles(first_rad=angle_1[i, j], second_rad=angle_2[i, j])
@@ -387,27 +422,27 @@ def _voting_iteration(
 
         others = indices[available_mask]
 
-        triplet = CommonLineTriplet(
-            one_with_two=angles_at(i, j),
-            one_with_three=angles_at(i, others),
-            two_with_three=angles_at(j, others),
-        )
-        num, den, valid = _alignment_geometry(broadcast_triplet(triplet), eps=eps)
-
         weights = reliabilities[i, others] * reliabilities[j, others]
-        support = valid & (weights > 0)
-
-        if not support.any():
-            raise ValueError(f"Unsupported image pair {(i, j)}.")
-
-        detected_tilts = np.arccos(np.clip(num[support] / den[support], -1.0, 1.0))
-
-        tilt, confidence = _weighted_histogram_vote(
-            detected_tilt=detected_tilts,
-            weights=weights[support],
-            bins=voting_bins,
-            sigma=voting_sigma,
-        )
+        positive = weights > 0
+        tilt, confidence = np.nan, 0.0
+        if positive.any():
+            others, weights = others[positive], weights[positive]
+            triplet = CommonLineTriplet(
+                one_with_two=angles_at(i, j),
+                one_with_three=angles_at(i, others),
+                two_with_three=angles_at(j, others),
+            )
+            num, den, valid = _alignment_geometry(broadcast_triplet(triplet), eps=eps)
+            if valid.any():
+                detected_tilts = np.arccos(np.clip(num[valid] / den[valid], -1.0, 1.0))
+                tilt, confidence = _weighted_histogram_vote(
+                    detected_tilt=detected_tilts,
+                    weights=weights[valid],
+                    bins=voting_bins,
+                    sigma=voting_sigma,
+                )
+                out_supported[i, j] = True
+                out_supported[j, i] = True
 
         out_new_reliabilities[i, j] = confidence
         out_new_reliabilities[j, i] = confidence
@@ -420,4 +455,8 @@ def _voting_iteration(
         available_mask[i] = True
         available_mask[j] = True
 
-    return out_tilts, out_new_reliabilities
+    return SoftVotingResult(
+        tilts=out_tilts,
+        reliabilities=out_new_reliabilities,
+        supported=out_supported,
+    )

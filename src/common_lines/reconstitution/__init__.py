@@ -1,6 +1,11 @@
 """Recover relative orientations from common-line triplets."""
 
-from .euler import SoftVotingOptions, alignment_euler_angles, valid_euler_triplets
+from .euler import (
+    SoftVotingOptions,
+    SoftVotingResult,
+    alignment_euler_angles,
+    valid_euler_triplets,
+)
 from .matrix import compute_transformation_matrices, get_transformation_for_second_image
 from .triplets import CommonLineAngles, CommonLineTriplet
 
@@ -8,6 +13,7 @@ __all__ = [
     "CommonLineAngles",
     "CommonLineTriplet",
     "SoftVotingOptions",
+    "SoftVotingResult",
     "alignment_euler_angles",
     "compute_transformation_matrices",
     "get_transformation_for_second_image",

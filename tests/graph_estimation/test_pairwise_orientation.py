@@ -66,6 +66,18 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
 
     assert np.allclose(direct, expected, atol=1.0e-12)
 
+    # The batched fallback must obey the same rotation convention when the
+    # two angle arrays broadcast to a multidimensional grid.
+    first = np.array([0.1, 0.5])[:, None]
+    second = np.array([-0.2, 0.3, 1.2])
+    batched = pairwise_orientation._estimate_pairwise_fallback(first, second)
+    expected_batch = Rotation.from_euler(
+        "z", (second - first).reshape(-1, 1)
+    ).as_matrix()
+    np.testing.assert_allclose(
+        batched, expected_batch.reshape(2, 3, 3, 3), rtol=0, atol=1e-12
+    )
+
 
 @pytest.mark.parametrize("method", ["averaging", "voting"])
 def test_graph_filters_and_samples_reproducibly(
@@ -174,7 +186,7 @@ def test_voting_uses_a_five_degree_bandwidth() -> None:
     np.testing.assert_allclose(candidates[0, 1], expected, rtol=0, atol=1e-12)
 
 
-@pytest.mark.parametrize("method", ["averaging", "voting"])
+@pytest.mark.parametrize("method", ["averaging", "voting", "soft_voting"])
 def test_all_degenerate_triplets_use_identity_fallback(
     method: ReconstitutionMethod,
 ) -> None:

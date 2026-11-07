@@ -192,9 +192,6 @@ Normally, a relative orientation is reconstructed using a third image. For some 
 ``used_fallback[i, j]`` indicates whether this occurred for the directed edge from image i to image j.
 Its diagonal is False. This is a fallback indicator, not a confidence score: an edge estimated without fallback can still be inaccurate.
 
-This fallback currently applies to `"averaging"` and `"voting"`. `"soft_voting"` raises `ValueError` identifying any pair without a geometrically valid positive-weight witness.
-Successful soft-voting calls return an all-False `used_fallback` mask.
-
 The fallback still respects the same convention:
 
 ```text
