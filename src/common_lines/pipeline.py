@@ -13,6 +13,7 @@ from common_lines.graph_estimation import (
 )
 from common_lines.preprocessing import PreprocessingOptions, preprocess_images
 from common_lines.radon import batch_common_line_sinograms
+from common_lines.reconstitution import SoftVotingOptions
 
 DEFAULT_THETA = np.arange(0.0, 180.0, 0.5)
 
@@ -61,6 +62,7 @@ def build_relative_orientations_graph(
     common_line_block_size: int = 4,
     reconstitution_method: ReconstitutionMethod = "averaging",
     handedness_method: HandednessMethod = "star",
+    soft_voting_options: SoftVotingOptions | None = None,
 ) -> np.ndarray:
     """
     Build a graph of relative 3D orientations between all image pairs.
@@ -71,10 +73,11 @@ def build_relative_orientations_graph(
         Input images with shape ``(n_images, height, width)``, with at least
         three square images. The input is unchanged.
     n_third : int
-        Maximum number of valid third images used to estimate each ordered pair.
-        Must lie in ``[1, n_images - 2]``.
+        Maximum number of valid third images used to estimate each ordered pair
+        with "averaging" or "voting". Must lie in ``[1, n_images - 2]`` for those
+        methods. Ignored by "soft_voting", which uses all valid witnesses.
     random_seed : int, optional
-        Seed used to randomize the order in which third images are tested.
+        Seed used to sample valid third images. Ignored by "soft_voting".
     handedness_reference : tuple[int, int], optional
         Ordered image pair used to fix one of the two global handedness
         solutions. Its measured rotation fixes the arbitrary global hand, and
@@ -106,14 +109,18 @@ def build_relative_orientations_graph(
         detection. Larger values may improve throughput but require more memory.
         Default is 4.
     reconstitution_method : ReconstitutionMethod, optional
-        Method used to combine third-image estimates for each pair: ``"voting"``
-        (default) or ``"averaging"``.
+        Method used to combine third-image estimates: "averaging" (default),
+        "voting" for unweighted Gaussian voting, or "soft_voting" for iterative
+        voting weighted by common-line reliabilities.
     handedness_method : HandednessMethod, optional
         Method used to select compatible edge hands: ``"star"`` (default)
         aligns them using a reference star; ``"synchronization"`` combines
         triplet constraints through spectral J-synchronization. Both retain
         each measured rotation up to reflection and leave full rotation
         synchronization to downstream processing.
+    soft_voting_options : SoftVotingOptions, optional
+        Grid, bandwidth, iteration cap, and stopping tolerance for "soft_voting".
+        None uses the defaults. Only accepted with reconstitution_method="soft_voting".
 
     Returns
     -------
@@ -133,8 +140,12 @@ def build_relative_orientations_graph(
 
     Notes
     -----
-    The pairwise rotations are estimated independently. The graph is not forced
-    to satisfy inverse or cycle consistency.
+    Soft voting couples tilt estimates through shared reliability updates;
+    the other methods estimate pairs independently. The graph is not forced
+    to satisfy inverse or cycle consistency. Soft voting raises ValueError
+    identifying a pair without valid positive-weight support; fallback for
+    this method is not yet implemented. Successful soft-voting calls mark no
+    edges as fallback.
 
     The opposite, equally valid global solution is obtained by conjugating every
     graph block with ``HANDEDNESS_REFLECTION``. This can be done with the
@@ -151,6 +162,7 @@ def build_relative_orientations_graph(
         preprocessing_options=preprocessing_options,
         reconstitution_method=reconstitution_method,
         handedness_method=handedness_method,
+        soft_voting_options=soft_voting_options,
     ).graph
 
 
@@ -166,6 +178,7 @@ def build_relative_orientations_graph_with_diagnostics(
     common_line_block_size: int = 4,
     reconstitution_method: ReconstitutionMethod = "averaging",
     handedness_method: HandednessMethod = "star",
+    soft_voting_options: SoftVotingOptions | None = None,
 ) -> OrientationEstimationResult:
     """
     Estimate the directed relative-orientation graph and return diagnostics.
@@ -174,6 +187,12 @@ def build_relative_orientations_graph_with_diagnostics(
     ``build_relative_orientations_graph``, but additionally reports which
     edges required the pairwise fallback and which edge was used to fix the
     global handedness.
+
+    With reconstitution_method="soft_voting", all valid witnesses are used;
+    n_third and random_seed are ignored. soft_voting_options customizes the
+    update parameters, or None uses the defaults. Unsupported pairs raise
+    ValueError rather than using fallback; successful calls return an all-False
+    used_fallback mask.
 
     The graph follows the same convention as
     ``build_relative_orientations_graph``:
@@ -193,6 +212,7 @@ def build_relative_orientations_graph_with_diagnostics(
         handedness_reference=handedness_reference,
         theta=theta,
         common_line_block_size=common_line_block_size,
+        reconstitution_method=reconstitution_method,
     )
 
     if precenter_method is not None:
@@ -221,6 +241,7 @@ def build_relative_orientations_graph_with_diagnostics(
         n_third=n_third,
         random_seed=random_seed,
         method=reconstitution_method,
+        soft_voting_options=soft_voting_options,
     )
     del angle_1, angle_2
 
@@ -245,6 +266,7 @@ def _validate_pipeline_inputs(
     handedness_reference: tuple[int, int] | None,
     theta: np.ndarray | None,
     common_line_block_size: int,
+    reconstitution_method: ReconstitutionMethod,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Validate the public pipeline inputs and prepare the angular grid."""
     images = np.asarray(images)
@@ -263,7 +285,7 @@ def _validate_pipeline_inputs(
     if n_images < 3:
         raise ValueError("At least three images are required.")
 
-    if not (1 <= n_third <= n_images - 2):
+    if reconstitution_method != "soft_voting" and not (1 <= n_third <= n_images - 2):
         raise ValueError(
             f"n_third must be in [1, n_images - 2] = [1, {n_images - 2}], "
             f"got {n_third}."

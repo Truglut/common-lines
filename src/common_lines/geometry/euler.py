@@ -14,6 +14,7 @@ class EulerAngles:
     ``euler_zyz_to_matrix`` defines their rotation order and signs; these are
     coordinate transformations, not active rotations with the same angles.
     """
+
     rot: np.ndarray | float
     tilt: np.ndarray | float
     psi: np.ndarray | float

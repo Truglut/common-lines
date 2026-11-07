@@ -5,9 +5,10 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from common_lines import pipeline
+from common_lines import SoftVotingOptions, pipeline
+from common_lines.detection import CommonLineGraph
 from common_lines.geometry.forward import compute_intrinsic_common_line_angles
-from common_lines.graph_estimation import HandednessMethod
+from common_lines.graph_estimation import HandednessMethod, pairwise_orientation
 from common_lines.graph_estimation import handedness as graph_handedness
 
 
@@ -102,6 +103,90 @@ def test_simple_api_returns_only_graph(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert isinstance(graph, np.ndarray)
     np.testing.assert_array_equal(graph, detailed.graph)
+
+
+def test_soft_voting_pipeline_preserves_reversals_and_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frames = Rotation.random(6, random_state=np.random.default_rng(12)).as_matrix()
+    n_images = len(frames)
+    i, j = np.triu_indices(n_images, k=1)
+    first, second = compute_intrinsic_common_line_angles(frames[i], frames[j])
+    first_deg, second_deg = np.rad2deg(first), np.rad2deg(second)
+    raw_first, raw_second = first_deg % 180.0, second_deg % 180.0
+    theta = np.unique(np.concatenate((raw_first, raw_second)))
+    index = np.zeros((n_images, n_images), dtype=int)
+    index[i, j] = np.searchsorted(theta, raw_first)
+    index[j, i] = np.searchsorted(theta, raw_second)
+    reversed_match = np.zeros((n_images, n_images), dtype=bool)
+    reversals = (np.cos(first - np.deg2rad(raw_first)) < 0) != (
+        np.cos(second - np.deg2rad(raw_second)) < 0
+    )
+    reversed_match[i, j] = reversals
+    reversed_match[j, i] = reversals
+    assert reversals.any() and not reversals.all()
+    common_lines = CommonLineGraph(
+        index=index,
+        correlation=np.ones((n_images, n_images)),
+        reversed_match=reversed_match,
+        n_angles=len(theta),
+    )
+    # Keep the real detector-angle conversion and graph algorithms; only the
+    # image-dependent detection stage is replaced with exact measurements.
+    monkeypatch.setattr(
+        pipeline,
+        "batch_common_line_sinograms",
+        lambda images, theta: np.empty((len(images), len(theta), images.shape[-1])),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "detect_common_lines_all_pairs",
+        lambda sinograms, allow_reversed, block_size: common_lines,
+    )
+    options = SoftVotingOptions(
+        voting_bins=31, voting_sigma=0.12, max_its=2, stopping_tol=0.0
+    )
+    images = np.zeros((n_images, 5, 5))
+    images.flags.writeable = False
+    with patch.object(
+        pairwise_orientation,
+        "soft_vote_tilts",
+        wraps=pairwise_orientation.soft_vote_tilts,
+    ) as voter:
+        detailed = pipeline.build_relative_orientations_graph_with_diagnostics(
+            images,
+            theta=theta,
+            reconstitution_method="soft_voting",
+            soft_voting_options=options,
+            n_third=0,
+            random_seed=-1,
+        )
+        simple = pipeline.build_relative_orientations_graph(
+            images,
+            theta=theta,
+            reconstitution_method="soft_voting",
+            soft_voting_options=options,
+            n_third=n_images + 1,
+            random_seed=42,
+        )
+        assert voter.call_count == 2
+        assert all(call.kwargs["options"] is options for call in voter.call_args_list)
+    assert not detailed.used_fallback.any()
+    assert detailed.handedness_reference == (0, 1)
+    np.testing.assert_array_equal(simple, detailed.graph)
+    truth = frames[None, :] @ frames[:, None].swapaxes(-1, -2)
+    mirrored = (
+        graph_handedness.HANDEDNESS_REFLECTION
+        @ truth
+        @ graph_handedness.HANDEDNESS_REFLECTION
+    )
+    assert (
+        min(
+            np.max(np.abs(detailed.graph - truth)),
+            np.max(np.abs(detailed.graph - mirrored)),
+        )
+        < 1e-11
+    )
 
 
 @pytest.mark.parametrize("handedness_method", get_args(HandednessMethod))

@@ -254,14 +254,14 @@ def _synchronize_with_j_sync(
     ordered ``reference_pair``, including a lower-triangle reference.
 
     Inputs follow ``select_consistent_handedness`` and are assumed to be already
-    validated by said function. 
+    validated by said function.
 
-    Return a new float64 graph with identity diagonal entries and each measured edge 
+    Return a new float64 graph with identity diagonal entries and each measured edge
     retained up to J conjugation.
-    
-    With two images, align the reverse edge directly to the reference transpose 
-    without building a spectral problem. 
-    
+
+    With two images, align the reverse edge directly to the reference transpose
+    without building a spectral problem.
+
     No exact inverse or cycle consistency is imposed.
     """
     n_images = async_graph.shape[0]

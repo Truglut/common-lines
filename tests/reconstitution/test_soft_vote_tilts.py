@@ -5,6 +5,7 @@ from scipy.spatial.transform import Rotation
 
 from common_lines.geometry.forward import compute_intrinsic_common_line_angles
 from common_lines.reconstitution.euler import (
+    SoftVotingOptions,
     _voting_iteration,
     soft_vote_tilts,
 )
@@ -38,7 +39,7 @@ def test_exact_geometry_recovers_pairwise_tilts() -> None:
     assert np.isnan(np.diag(confidence)).all()
 
     result = soft_vote_tilts(
-        angle_1, angle_2, voting_bins=181, voting_sigma=0.1, max_its=5
+        angle_1, angle_2, options=SoftVotingOptions(voting_sigma=0.1, max_its=5)
     )
     np.testing.assert_allclose(result, expected, rtol=0, atol=1e-11)
 

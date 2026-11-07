@@ -31,11 +31,15 @@ def test_graph_recovers_known_frames_with_multiple_third_views(
     first, second = compute_intrinsic_common_line_angles(
         frames[:, None], frames[None, :]
     )
-    candidates, fallback = (
-        pairwise_orientation.estimate_relative_orientation_candidates(
-            first, second, n_third=3, random_seed=4, method=method
+    # Self-pair angles are undefined and must never enter rotation conversion.
+    np.fill_diagonal(first, np.inf)
+    np.fill_diagonal(second, np.inf)
+    with np.errstate(divide="raise", invalid="raise"):
+        candidates, fallback = (
+            pairwise_orientation.estimate_relative_orientation_candidates(
+                first, second, n_third=3, random_seed=4, method=method
+            )
         )
-    )
     assert not fallback.any()
     graph = select_consistent_handedness(
         candidates, reference_pair=(0, 1), method=handedness_method

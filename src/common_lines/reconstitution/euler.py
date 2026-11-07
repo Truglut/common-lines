@@ -1,4 +1,5 @@
 import itertools
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -9,6 +10,37 @@ from .triplets import CommonLineAngles, CommonLineTriplet, broadcast_triplet
 
 GAUSSIAN_REFINEMENT_MAX_ITS = 100
 GAUSSIAN_REFINEMENT_TOLERANCE = 1.0e-12
+
+
+FIVE_DEGREES_IN_RADIANS = float(np.deg2rad(5.0))
+
+
+@dataclass
+class SoftVotingOptions:
+    """
+    Parameters for iterative soft voting of pairwise tilt angles.
+
+    Attributes
+    ----------
+    voting_bins : int
+        Number of inclusive grid points on [0, pi] used to locate each initial
+        peak. Must be at least two. Default is 181.
+    voting_sigma : float
+        Positive, finite Gaussian bandwidth in radians. Default is five degrees.
+    max_its : int
+        Maximum number of synchronous reliability updates. Must be positive.
+        Default is 10; reaching the cap does not imply convergence.
+    stopping_tol : float
+        Nonnegative, finite relative reliability tolerance. Stop when the
+        largest off-diagonal change is strictly below this tolerance times
+        the previous largest reliability. Zero disables early stopping.
+        Default is 0.01.
+    """
+
+    voting_bins: int = 181
+    voting_sigma: float = FIVE_DEGREES_IN_RADIANS
+    max_its: int = 10
+    stopping_tol: float = 0.01
 
 
 def _alignment_geometry(
@@ -226,10 +258,7 @@ def _weighted_histogram_vote(
 def soft_vote_tilts(
     angle_1: FloatArray,
     angle_2: FloatArray,
-    voting_bins: int,
-    voting_sigma: float,
-    max_its: int,
-    stopping_tol: float = 0.01,
+    options: SoftVotingOptions,
     eps: float = 1.0e-6,
 ) -> FloatArray:
     """
@@ -248,16 +277,9 @@ def soft_vote_tilts(
         corrections must already be included; angle_2 need not be angle_1.T.
         Off-diagonal entries must be real and finite; diagonals are unused.
         Shapes and finite values are assumed, not checked here.
-    voting_bins : int
-        Number of inclusive grid points on [0, pi]; must be at least two.
-    voting_sigma : float
-        Positive, finite Gaussian bandwidth in radians.
-    max_its : int
-        Maximum number of synchronous updates; must be at least one.
-    stopping_tol : float, optional
-        Nonnegative, finite relative reliability tolerance. Stop when the
-        largest off-diagonal change is strictly below this tolerance times
-        the previous largest reliability. Zero disables early stopping.
+    options : SoftVotingOptions
+        Voting grid, Gaussian bandwidth, iteration cap, and relative reliability
+        stopping tolerance. See ``SoftVotingOptions`` for defaults and bounds.
     eps : float, optional
         Geometric tolerance, as in ``alignment_euler_angles``.
 
@@ -270,11 +292,17 @@ def soft_vote_tilts(
     Raises
     ------
     ValueError
-        If max_its is non-positive or any pair has no geometrically valid
+        If options.max_its is non-positive or any pair has no geometrically valid
         positive-weight witness. Unsupported-pair errors identify the pair.
 
     Notes
     -----
+    Every other image is considered as a witness for each unordered pair.
+    Geometry is calculated once per pair per iteration; invalid witnesses are
+    filtered before calculating tilts. No validity cube is stored. Inputs are
+    unchanged. Shapes, finite values, and the remaining option bounds are
+    assumed valid. Convergence is not guaranteed; options.max_its caps the work.
+
     This method is based on the following work:
     Wang, X., Xu, Y., Zheng, H. et al.
     Soft-voting for robust common line assessment in cryo-EM angular reconstruction.
@@ -282,7 +310,7 @@ def soft_vote_tilts(
     """
     n_images = angle_1.shape[0]
 
-    if max_its <= 0:
+    if options.max_its <= 0:
         raise ValueError("max_its must be a positive integer")
 
     indices = np.arange(n_images)
@@ -291,13 +319,13 @@ def soft_vote_tilts(
     off_diagonal = np.ones_like(reliabilities, dtype=bool)
     off_diagonal[indices, indices] = False
 
-    for _ in range(max_its):
+    for _ in range(options.max_its):
         tilts, next_reliabilities = _voting_iteration(
             angle_1=angle_1,
             angle_2=angle_2,
             reliabilities=reliabilities,
-            voting_bins=voting_bins,
-            voting_sigma=voting_sigma,
+            voting_bins=options.voting_bins,
+            voting_sigma=options.voting_sigma,
             eps=eps,
         )
 
@@ -306,7 +334,7 @@ def soft_vote_tilts(
         )
         baseline = np.max(reliabilities[off_diagonal])
         reliabilities = next_reliabilities
-        if max_change < stopping_tol * baseline:
+        if max_change < options.stopping_tol * baseline:
             break
 
     return tilts
@@ -327,8 +355,8 @@ def _voting_iteration(
     angle_1 and angle_2 follow the input conventions of ``soft_vote_tilts``.
     reliabilities is a symmetric (n, n) array with finite off-diagonal entries
     in [0, 1]; its diagonal is unused and may be NaN. These are preconditions,
-    not validated here. Voting parameters and eps have the same meanings as
-    in ``soft_vote_tilts``.
+    not validated here. voting_bins and voting_sigma have the same meanings
+    as in ``SoftVotingOptions``; eps follows ``alignment_euler_angles``.
 
     For each unordered pair, all other images are considered as witnesses.
     Geometry and tilt candidates are calculated together, retaining only

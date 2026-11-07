@@ -9,14 +9,16 @@ from common_lines.geometry.euler import EulerAngles, euler_zyz_to_matrix
 from common_lines.geometry.handedness import HANDEDNESS_REFLECTION
 from common_lines.geometry.procrustes import nearest_rotation
 from common_lines.reconstitution.euler import (
+    SoftVotingOptions,
     alignment_euler_angles,
     rot_psi_from_angle_pair,
+    soft_vote_tilts,
     valid_euler_triplets,
     vote_tilt,
 )
 from common_lines.reconstitution.triplets import CommonLineAngles, CommonLineTriplet
 
-ReconstitutionMethod = Literal["averaging", "voting"]
+ReconstitutionMethod = Literal["averaging", "voting", "soft_voting"]
 
 
 def _average_handedness_branches(
@@ -90,6 +92,7 @@ def estimate_relative_orientation_candidates(
     n_third: int,
     random_seed: int | None,
     method: ReconstitutionMethod,
+    soft_voting_options: SoftVotingOptions | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Estimate one arbitrary handedness candidate for every ordered image pair.
@@ -101,15 +104,24 @@ def estimate_relative_orientation_candidates(
         ``(n_images, n_images)``. For pair ``(i, j)``,
         ``angle_1[i, j]`` is the common-line angle in image ``i`` and
         ``angle_2[i, j]`` is the corresponding oriented angle in image ``j``.
-        Angles are expressed in radians.
+        Angles are expressed in radians and include detector-reversal
+        corrections. Diagonal entries are unused.
     n_third
-        Maximum number of valid third images used for each ordered pair.
+        Maximum number of valid third images used for each ordered pair with
+        "averaging" or "voting". Ignored by "soft_voting", which uses all valid
+        witnesses.
     random_seed
         Seed used to sample valid third images uniformly without replacement.
+        Ignored by "soft_voting".
     method
         "voting" estimates a Gaussian tilt mode with a five-degree
-        bandwidth and continuous refinement. "averaging" averages rotations
-        after aligning their handedness branches.
+        bandwidth and continuous refinement.
+        "soft_voting" iteratively weights witnesses by the reliabilities of
+        their incident common lines, updating reliability from Gaussian support.
+        "averaging" averages rotations after aligning their handedness branches.
+    soft_voting_options : SoftVotingOptions, optional
+        Grid, bandwidth, iteration cap, and stopping tolerance for "soft_voting".
+        None uses the defaults. Only accepted with method="soft_voting".
 
     Returns
     -------
@@ -120,21 +132,45 @@ def estimate_relative_orientation_candidates(
     numpy.ndarray
         Boolean array with shape ``(n_images, n_images)`` indicating for each directed
         image pair, whether a fallback was used due to not finding a valid third
-        image for the angular reconstitution algorithm.
+        image for the angular reconstitution algorithm. Always False on a
+        successful "soft_voting" call, which raises for unsupported pairs.
+
+    Raises
+    ------
+    ValueError
+        If the method or its settings are invalid, or if "soft_voting" finds
+        a pair without a geometrically valid positive-weight witness. Soft
+        voting currently does not use the pairwise fallback.
     """
-    if method not in ("averaging", "voting"):
-        raise ValueError("method must be 'averaging' or 'voting'.")
-    if n_third < 1:
+    if method not in ("averaging", "voting", "soft_voting"):
+        raise ValueError("method must be 'averaging', 'voting', or 'soft_voting'.")
+    if method != "soft_voting" and n_third < 1:
         raise ValueError("n_third must be at least 1.")
+    if soft_voting_options is not None and method != "soft_voting":
+        raise ValueError(
+            "Can only provide soft_voting_options when the selected reconstitution "
+            "method is soft_voting."
+        )
 
     n_images = angle_1.shape[0]
     image_indices = np.arange(n_images)
-    rng = np.random.default_rng(random_seed)
-
     candidates = np.empty((n_images, n_images, 3, 3), dtype=np.float64)
     candidates[image_indices, image_indices] = np.eye(3)
-
     used_fallback = np.zeros((n_images, n_images), dtype=bool)
+
+    if method == "soft_voting":
+        options = (
+            SoftVotingOptions() if soft_voting_options is None else soft_voting_options
+        )
+        tilts = soft_vote_tilts(angle_1, angle_2, options=options)
+        off_diagonal = ~np.eye(n_images, dtype=bool)
+        rot, psi = rot_psi_from_angle_pair(angle_1[off_diagonal], angle_2[off_diagonal])
+        angles = EulerAngles(rot=rot, tilt=tilts[off_diagonal], psi=psi)
+        candidates[off_diagonal] = euler_zyz_to_matrix(angles)
+
+        return candidates, used_fallback
+
+    rng = np.random.default_rng(random_seed)
 
     def pair_at(i: int | np.ndarray, j: int | np.ndarray) -> CommonLineAngles:
         return CommonLineAngles(first_rad=angle_1[i, j], second_rad=angle_2[i, j])

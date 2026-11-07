@@ -69,9 +69,10 @@ If ``R_i`` and ``R_j`` transform coordinates from some common reference system i
 graph[i, j] = R_j @ R_i.T
 ```
 
-Pairwise relative orientations are estimated independently, then their handedness branches are selected together. The graph is not constrained to satisfy exact inverse or cycle consistency: with noisy data, ``graph[j, i]`` need not equal ``graph[i, j].T``.
+Pairwise relative orientations are estimated, then their handedness branches are selected together. The estimated graph is not explicitly constrained to satisfy inverse or cycle consistency.
 
-By default, each pair uses one valid third image (`n_third=1`). Increase `n_third`, up to `n_images - 2`, to combine estimates from more third images. The default combination method is `reconstitution_method="voting"`; `"averaging"` is also available.
+The default combination method is `reconstitution_method="averaging"`; `"voting"` uses Gaussian voting to determine alignment angles. Both use at most `n_third` valid third images per pair (default one), sampled using `random_seed`. Increase `n_third`, up to `n_images - 2`, to combine estimates from more third images.
+Iterative `"soft_voting"` introduces reliability weights onto Gaussian voting. This method uses all available third images (i.e., when estimating pair $(i, j)$, it uses all indices $k \not \in \{ i, j\}$), so the `n_third` parameter is ignored.
 
 ## Handedness ambiguity
 
@@ -190,6 +191,9 @@ Normally, a relative orientation is reconstructed using a third image. For some 
 
 ``used_fallback[i, j]`` indicates whether this occurred for the directed edge from image i to image j.
 Its diagonal is False. This is a fallback indicator, not a confidence score: an edge estimated without fallback can still be inaccurate.
+
+This fallback currently applies to `"averaging"` and `"voting"`. `"soft_voting"` raises `ValueError` identifying any pair without a geometrically valid positive-weight witness.
+Successful soft-voting calls return an all-False `used_fallback` mask.
 
 The fallback still respects the same convention:
 
