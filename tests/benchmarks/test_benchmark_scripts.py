@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from common_lines import SoftVotingOptions
 from common_lines.centering import estimate_shifts, shift_images
 from common_lines.preprocessing import (
     PreprocessingOptions,
@@ -299,7 +301,7 @@ def test_public_pipeline_with_exact_detected_common_lines(monkeypatch):
     assert np.nanmax(scored["errors"]) < 1e-4
 
 
-@pytest.mark.parametrize("method", ["averaging", "voting"])
+@pytest.mark.parametrize("method", ["averaging", "voting", "soft_voting"])
 @pytest.mark.parametrize("handedness", ["star", "synchronization"])
 def test_pipeline_cli_passes_and_records_methods(
     tmp_path, monkeypatch, method, handedness
@@ -313,10 +315,21 @@ def test_pipeline_cli_passes_and_records_methods(
     metadata = tmp_path / "particles.npz"
     np.savez(metadata, matrices=matrices, original_images=np.ones((4, 9, 9)))
     prefix = tmp_path / method
+    expected_options = None
+    if method == "soft_voting":
+        expected_options = SoftVotingOptions()
+        if handedness == "synchronization":
+            expected_options = SoftVotingOptions(
+                voting_bins=37,
+                voting_sigma=float(np.deg2rad(7.5)),
+                max_its=3,
+                stopping_tol=0.0,
+            )
 
     def estimate(images, **kwargs):
         assert kwargs["reconstitution_method"] == method
         assert kwargs["handedness_method"] == handedness
+        assert kwargs["soft_voting_options"] == expected_options
         return SimpleNamespace(
             graph=true_graph(matrices),
             used_fallback=np.zeros((4, 4), dtype=bool),
@@ -326,22 +339,40 @@ def test_pipeline_cli_passes_and_records_methods(
     monkeypatch.setattr(
         pipeline_errors, "build_relative_orientations_graph_with_diagnostics", estimate
     )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "pipeline_errors",
-            str(metadata),
-            "--reconstitution-method",
-            method,
-            "--handedness-method",
-            handedness,
-            "--output",
-            str(prefix),
-        ],
-    )
+    command = [
+        "pipeline_errors",
+        str(metadata),
+        "--reconstitution-method",
+        method,
+        "--handedness-method",
+        handedness,
+        "--output",
+        str(prefix),
+    ]
+    if method == "soft_voting":
+        command.extend(["--n-third", "0"])
+        if handedness == "synchronization":
+            command.extend(
+                [
+                    "--soft-voting-bins",
+                    "37",
+                    "--soft-voting-sigma-deg",
+                    "7.5",
+                    "--soft-voting-max-its",
+                    "3",
+                    "--soft-voting-stopping-tol",
+                    "0",
+                ]
+            )
+    monkeypatch.setattr(sys, "argv", command)
     pipeline_errors.main()
     with np.load(prefix.with_suffix(".npz")) as data:
         configuration = json.loads(str(data["run_configuration_json"]))
     assert configuration["reconstitution_method"] == method
     assert configuration["handedness_method"] == handedness
+    assert configuration["soft_voting_options"] == (
+        asdict(expected_options) if expected_options is not None else None
+    )
+    assert configuration["witness_policy"] == (
+        "all" if method == "soft_voting" else "sampled"
+    )

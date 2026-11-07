@@ -1,13 +1,16 @@
 """Regression tests for scripts/orientation_errors.py."""
 
 import sys
+from dataclasses import asdict
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from common_lines import SoftVotingOptions
 from common_lines.geometry.handedness import HANDEDNESS_REFLECTION
 from scripts.orientation_errors import (
     evaluate_aggregated_pairs,
@@ -19,7 +22,7 @@ from scripts.orientation_errors import (
 )
 
 
-@pytest.mark.parametrize("method", ["averaging", "voting"])
+@pytest.mark.parametrize("method", ["averaging", "voting", "soft_voting"])
 @pytest.mark.parametrize("n_third", [1, 4])
 def test_aggregation_recovers_exact_and_mirrored_frames(method, n_third):
     matrices = random_rotations(6)
@@ -42,7 +45,7 @@ def test_aggregation_recovers_exact_and_mirrored_frames(method, n_third):
         assert max(row["rotation_error_deg"] for row in rows) < 1e-4
 
 
-@pytest.mark.parametrize("method", ["averaging", "voting"])
+@pytest.mark.parametrize("method", ["averaging", "voting", "soft_voting"])
 def test_aggregation_cli_records_method_and_preserves_noise_inputs(
     tmp_path, monkeypatch, method
 ):
@@ -54,34 +57,66 @@ def test_aggregation_cli_records_method_and_preserves_noise_inputs(
     metadata = tmp_path / "particles.npz"
     np.savez(metadata, matrices=random_rotations(6))
     prefix = tmp_path / method
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "orientation_errors",
-            str(metadata),
-            "--reconstitution-method",
-            method,
-            "--n-third",
-            "3",
-            "--modes",
-            "exact",
-            "perturbed",
-            "--noise-std",
-            "0",
-            "--output",
-            str(prefix),
-        ],
-    )
-    orientation_errors.main()
+    command = [
+        "orientation_errors",
+        str(metadata),
+        "--reconstitution-method",
+        method,
+        "--n-third",
+        "0" if method == "soft_voting" else "3",
+        "--modes",
+        "exact",
+        "perturbed",
+        "--noise-std",
+        "0",
+        "--output",
+        str(prefix),
+    ]
+    expected_options = None
+    if method == "soft_voting":
+        command.extend(
+            [
+                "--soft-voting-bins",
+                "37",
+                "--soft-voting-sigma-deg",
+                "7.5",
+                "--soft-voting-max-its",
+                "3",
+                "--soft-voting-stopping-tol",
+                "0",
+            ]
+        )
+        expected_options = SoftVotingOptions(
+            voting_bins=37,
+            voting_sigma=float(np.deg2rad(7.5)),
+            max_its=3,
+            stopping_tol=0.0,
+        )
+    monkeypatch.setattr(sys, "argv", command)
+    with patch.object(
+        orientation_errors,
+        "estimate_relative_orientation_candidates",
+        wraps=orientation_errors.estimate_relative_orientation_candidates,
+    ) as estimate:
+        orientation_errors.main()
+        assert estimate.call_count == 2
+        assert all(
+            call.kwargs["soft_voting_options"] == expected_options
+            for call in estimate.call_args_list
+        )
     rows = list(csv.DictReader(prefix.with_suffix(".csv").open()))
     assert len(rows) == 60
     assert all(row["reconstitution_method"] == method for row in rows)
     assert max(float(row["rotation_error_deg"]) for row in rows) < 1e-4
-    assert (
-        json.loads(prefix.with_suffix(".json").read_text())["reconstitution_method"]
-        == method
+    configuration = json.loads(prefix.with_suffix(".json").read_text())
+    assert configuration["reconstitution_method"] == method
+    assert configuration["soft_voting_options"] == (
+        asdict(expected_options) if expected_options is not None else None
     )
+    assert configuration["witness_policy"] == (
+        "all" if method == "soft_voting" else "sampled"
+    )
+    assert configuration["selected_indices"] == list(range(6))
 
 
 def random_rotations(n=10, seed=12):

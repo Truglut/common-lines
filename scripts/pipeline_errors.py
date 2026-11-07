@@ -12,6 +12,8 @@ Examples (from repository root):
     python -m scripts.pipeline_errors particles.npz --preprocessing default --n-third 10
     python -m scripts.pipeline_errors particles.npz --n-third 24 --reconstitution-method averaging
     python -m scripts.pipeline_errors particles.npz --n-third 24 --handedness-method synchronization
+    python -m scripts.pipeline_errors particles.npz --reconstitution-method soft_voting \\
+        --handedness-method synchronization --soft-voting-max-its 10
     python -m scripts.pipeline_errors particles.star --image-stack particles.mrcs
 
 Ground-truth conventions: R_i maps reference coordinates into image i;
@@ -32,11 +34,16 @@ can choose incompatible symmetry operators, so it does NOT measure whether
 estimated rotations admit one globally consistent symmetry assignment.
 The underlying PUBLIC graph estimator remains unchanged and is not itself
 symmetry-aware.
+
+Soft voting uses all valid witnesses, ignoring --n-third. The seed still
+controls image selection. --soft-voting-* controls are recorded with their
+resolved values; bandwidth is supplied in degrees and saved in radians.
 """
 
 import argparse
 import csv
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -53,12 +60,20 @@ if __package__:
         configuration_description,
         resolve_preprocessing_options,
     )
+    from ._benchmark_soft_voting import (
+        add_soft_voting_arguments,
+        resolve_soft_voting_options,
+    )
     from .detection_errors import read_images, read_metadata, symmetry_operators
 else:
     from _benchmark_preprocessing import (
         add_preprocessing_arguments,
         configuration_description,
         resolve_preprocessing_options,
+    )
+    from _benchmark_soft_voting import (
+        add_soft_voting_arguments,
+        resolve_soft_voting_options,
     )
     from detection_errors import read_images, read_metadata, symmetry_operators
 
@@ -405,12 +420,12 @@ def main():
         "--n-third",
         type=int,
         default=1,
-        help="Maximum valid third-image witnesses per directed edge (default: 1)",
+        help="Maximum valid witnesses per directed edge for averaging/voting; ignored by soft_voting (default: 1)",
     )
     parser.add_argument("--common-line-block-size", type=int, default=4)
     parser.add_argument(
         "--reconstitution-method",
-        choices=("averaging", "voting"),
+        choices=("averaging", "voting", "soft_voting"),
         default="voting",
         help="Triplet aggregation method (default: voting)",
     )
@@ -431,16 +446,18 @@ def main():
         "--seed", type=int, default=0, help="Sampling and pipeline seed"
     )
     parser.add_argument("--output", type=Path, default=Path("graph_validation"))
+    add_soft_voting_arguments(parser)
     add_preprocessing_arguments(parser)
     args = parser.parse_args()
+    soft_voting_options = resolve_soft_voting_options(parser, args)
     operators = symmetry_operators(args.symmetry)
 
     if args.n_images < 3 or not np.isfinite(args.angle_step) or args.angle_step <= 0:
         parser.error(
             "--n-images must be >= 3 and --angle-step must be finite and positive"
         )
-    if args.n_third < 1 or args.common_line_block_size < 1:
-        parser.error("--n-third and --common-line-block-size must be >= 1")
+    if args.common_line_block_size < 1:
+        parser.error("--common-line-block-size must be >= 1")
 
     matrices, names, embedded = read_metadata(args.metadata)
     if matrices.ndim != 3 or matrices.shape[-2:] != (3, 3) or len(matrices) < 3:
@@ -454,8 +471,10 @@ def main():
     selected_matrices = matrices[indices]
     images = read_images(args.metadata, indices, names, embedded, args.image_stack)
 
-    if args.n_third > len(images) - 2:
-        parser.error(f"--n-third cannot exceed n-images - 2 = {len(images) - 2}")
+    if args.reconstitution_method != "soft_voting" and not (
+        1 <= args.n_third <= len(images) - 2
+    ):
+        parser.error(f"--n-third must lie in [1, {len(images) - 2}]")
     reference = tuple(args.handedness_reference) if args.handedness_reference else None
     options = resolve_preprocessing_options(images, args)
     theta = np.arange(0.0, 180.0, args.angle_step)
@@ -464,9 +483,14 @@ def main():
     if len(operators) > 1:
         print("Note: this score does not enforce graph-wide symmetry consistency.")
     print(f"Image preparation: {configuration_description(args)}")
-    print(f"n_third={args.n_third}, angle_step={args.angle_step:g}, seed={args.seed}")
+    witnesses = "all valid" if soft_voting_options is not None else str(args.n_third)
+    print(f"witnesses={witnesses}, angle_step={args.angle_step:g}, seed={args.seed}")
     print(f"Reconstitution method: {args.reconstitution_method}")
     print(f"Handedness method: {args.handedness_method}")
+    if soft_voting_options is not None:
+        print(
+            f"Soft-voting options (bandwidth in radians): {asdict(soft_voting_options)}"
+        )
     estimate = build_relative_orientations_graph_with_diagnostics(
         images,
         n_third=args.n_third,
@@ -478,6 +502,7 @@ def main():
         preprocessing_options=options,
         reconstitution_method=args.reconstitution_method,
         handedness_method=args.handedness_method,
+        soft_voting_options=soft_voting_options,
     )
     result = evaluate_graph(
         estimate.graph,
@@ -492,7 +517,13 @@ def main():
         estimate.graph,
         result,
         estimate.handedness_reference,
-        configuration=vars(args),
+        configuration=dict(
+            vars(args),
+            soft_voting_options=asdict(soft_voting_options)
+            if soft_voting_options is not None
+            else None,
+            witness_policy="all" if soft_voting_options is not None else "sampled",
+        ),
     )
 
 

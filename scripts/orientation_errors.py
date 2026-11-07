@@ -8,6 +8,8 @@ Examples (from the repository root):
         --max-triplets 1000 --angle-step 1
     python -m scripts.orientation_errors data/particles.npz --modes detected \\
         --reconstitution-method voting --n-third 24
+    python -m scripts.orientation_errors data/particles.npz --modes exact perturbed \\
+        --reconstitution-method soft_voting --soft-voting-max-its 10
 
 The three modes share the same sampled triplets:
   exact:       common lines from one consistent choice of ground-truth orientations
@@ -35,8 +37,10 @@ default center-of-mass centering and mask/background preprocessing. Exact and pe
 angles and do not process images. None of these modes runs pipeline.py's graph-level
 postprocessing. For STAR metadata or MRC stacks, see detection_errors.py.
 
-With --reconstitution-method, score pair aggregation over --n-third witnesses
-instead of isolated triplets. Both handedness candidates are scored per edge,
+With --reconstitution-method, score pair aggregation instead of isolated
+triplets. Averaging and voting sample up to --n-third valid witnesses per pair;
+soft_voting uses all valid witnesses and ignores --n-third. The seed still
+controls image selection and angular noise. Both handedness candidates are scored per edge,
 with an independent symmetry oracle. These errors are optimistic relative to
 pipeline_errors.py, which chooses one global handedness for the whole graph.
 --max-triplets applies only to the original isolated-triplet benchmark.
@@ -45,12 +49,14 @@ pipeline_errors.py, which chooses one global handedness for the whole graph.
 import argparse
 import csv
 import json
+from dataclasses import asdict
 from itertools import combinations
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+from common_lines import SoftVotingOptions
 from common_lines.detection import detect_common_lines_all_pairs
 from common_lines.geometry.forward import compute_intrinsic_common_line_angles
 from common_lines.geometry.handedness import (
@@ -76,6 +82,10 @@ if __package__:
         prepare_images,
         resolve_preprocessing_options,
     )
+    from ._benchmark_soft_voting import (
+        add_soft_voting_arguments,
+        resolve_soft_voting_options,
+    )
     from .detection_errors import read_images, read_metadata, symmetry_operators
 else:
     from _benchmark_preprocessing import (
@@ -83,6 +93,10 @@ else:
         configuration_description,
         prepare_images,
         resolve_preprocessing_options,
+    )
+    from _benchmark_soft_voting import (
+        add_soft_voting_arguments,
+        resolve_soft_voting_options,
     )
     from detection_errors import read_images, read_metadata, symmetry_operators
 
@@ -131,6 +145,7 @@ def evaluate_aggregated_pairs(
     method: ReconstitutionMethod,
     n_third: int,
     seed: int,
+    soft_voting_options: SoftVotingOptions | None = None,
 ) -> list[dict[str, object]]:
     """Score aggregation before graph handedness selection.
 
@@ -138,13 +153,20 @@ def evaluate_aggregated_pairs(
     This isolates pair estimation and is more optimistic than pipeline_errors'
     single graph-wide hand. All selected images can serve as witnesses.
     Input angles are in degrees; only the upper triangle is required.
+    Soft voting uses all valid witnesses and accepts soft_voting_options;
+    n_third and the witness-sampling seed do not affect its updates.
     """
     n = len(matrices)
     i, j = np.triu_indices(n, 1)
     a, b = np.deg2rad(first.copy()), np.deg2rad(second.copy())
     a[j, i], b[j, i] = b[i, j], a[i, j]
     candidates, fallback = estimate_relative_orientation_candidates(
-        a, b, n_third=n_third, random_seed=seed, method=method
+        a,
+        b,
+        n_third=n_third,
+        random_seed=seed,
+        method=method,
+        soft_voting_options=soft_voting_options,
     )
     mirrored = mirror_relative_orientations_graph(candidates)
     errors = np.full((n, n), np.inf)
@@ -573,15 +595,16 @@ def main():
     )
     parser.add_argument(
         "--reconstitution-method",
-        choices=("averaging", "voting"),
+        choices=("averaging", "voting", "soft_voting"),
         help="Benchmark this pair-aggregation method instead of isolated triplets",
     )
     parser.add_argument(
         "--n-third",
         type=int,
         default=8,
-        help="Maximum valid witnesses per pair in aggregation mode (default: 8)",
+        help="Maximum valid witnesses per pair for averaging/voting; ignored by soft_voting (default: 8)",
     )
+    add_soft_voting_arguments(parser)
     add_preprocessing_arguments(parser)
     parser.add_argument(
         "--pipeline-preprocessing",
@@ -594,6 +617,7 @@ def main():
     )
     parser.add_argument("--output", type=Path, default=Path("orientation_validation"))
     args = parser.parse_args()
+    soft_voting_options = resolve_soft_voting_options(parser, args)
     operators = symmetry_operators(args.symmetry)
 
     if args.pipeline_preprocessing:
@@ -627,7 +651,9 @@ def main():
         rng.choice(len(matrices), size=min(args.n_images, len(matrices)), replace=False)
     )
     selected_matrices = matrices[indices]
-    if args.reconstitution_method and not (1 <= args.n_third <= len(indices) - 2):
+    if args.reconstitution_method in ("averaging", "voting") and not (
+        1 <= args.n_third <= len(indices) - 2
+    ):
         parser.error("--n-third must lie in [1, selected image count - 2]")
     triplets = (
         sample_triplets(selected_matrices, args.max_triplets, rng)
@@ -640,9 +666,16 @@ def main():
 
     if args.reconstitution_method:
         print(f"Symmetry: {args.symmetry.upper()} (per-edge hand and symmetry oracle)")
-        print(
-            f"Images: {len(indices)}; method={args.reconstitution_method}; n_third={args.n_third}; seed={args.seed}"
+        witnesses = (
+            "all valid" if soft_voting_options is not None else str(args.n_third)
         )
+        print(
+            f"Images: {len(indices)}; method={args.reconstitution_method}; witnesses={witnesses}; seed={args.seed}"
+        )
+        if soft_voting_options is not None:
+            print(
+                f"Soft-voting options (bandwidth in radians): {asdict(soft_voting_options)}"
+            )
     else:
         print(f"Symmetry: {args.symmetry.upper()} (consistent triplet scoring)")
         print(f"Images selected: {len(indices)}; triplets selected: {len(triplets)}")
@@ -662,6 +695,7 @@ def main():
                 method=args.reconstitution_method,
                 n_third=args.n_third,
                 seed=args.seed,
+                soft_voting_options=soft_voting_options,
             )
         else:
             rows = evaluate_mode(
@@ -706,7 +740,15 @@ def main():
         evaluate("detected", np.nan, a, b, corr)
 
     if args.reconstitution_method:
-        save_pair_results(args.output, grouped, vars(args))
+        configuration = dict(
+            vars(args),
+            soft_voting_options=asdict(soft_voting_options)
+            if soft_voting_options is not None
+            else None,
+            witness_policy="all" if soft_voting_options is not None else "sampled",
+            selected_indices=indices.tolist(),
+        )
+        save_pair_results(args.output, grouped, configuration)
     else:
         save_results(args.output, grouped)
 
