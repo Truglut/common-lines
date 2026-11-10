@@ -8,10 +8,10 @@ and graph-level handedness selection all run inside the existing pipeline.
 
 Examples (from repository root):
     python -m scripts.pipeline_errors particles.npz --n-images 40 --angle-step 1
-    python -m scripts.pipeline_errors particles.npz --n-third 5 --precenter none
-    python -m scripts.pipeline_errors particles.npz --preprocessing default --n-third 10
-    python -m scripts.pipeline_errors particles.npz --n-third 24 --reconstitution-method averaging
-    python -m scripts.pipeline_errors particles.npz --n-third 24 --handedness-method synchronization
+    python -m scripts.pipeline_errors particles.npz --max-third 5 --precenter none
+    python -m scripts.pipeline_errors particles.npz --preprocessing default --max-third 10
+    python -m scripts.pipeline_errors particles.npz --max-third 24 --reconstitution-method averaging
+    python -m scripts.pipeline_errors particles.npz --max-third 24 --handedness-method synchronization
     python -m scripts.pipeline_errors particles.npz --reconstitution-method soft_voting \\
         --handedness-method synchronization --soft-voting-max-its 10
     python -m scripts.pipeline_errors particles.star --image-stack particles.mrcs
@@ -35,7 +35,7 @@ estimated rotations admit one globally consistent symmetry assignment.
 The underlying PUBLIC graph estimator remains unchanged and is not itself
 symmetry-aware.
 
-Soft voting uses all valid witnesses, ignoring --n-third. The seed still
+Soft voting uses all valid witnesses, ignoring --max-third. The seed still
 controls image selection. --soft-voting-* controls are recorded with their
 resolved values; bandwidth is supplied in degrees and saved in radians.
 """
@@ -417,7 +417,7 @@ def main():
         help="Reference-object symmetry, Cn or Dn (default: C1)",
     )
     parser.add_argument(
-        "--n-third",
+        "--max-third",
         type=int,
         default=1,
         help="Maximum valid witnesses per directed edge for averaging/voting; ignored by soft_voting (default: 1)",
@@ -472,9 +472,9 @@ def main():
     images = read_images(args.metadata, indices, names, embedded, args.image_stack)
 
     if args.reconstitution_method != "soft_voting" and not (
-        1 <= args.n_third <= len(images) - 2
+        1 <= args.max_third <= len(images) - 2
     ):
-        parser.error(f"--n-third must lie in [1, {len(images) - 2}]")
+        parser.error(f"--max-third must lie in [1, {len(images) - 2}]")
     reference = tuple(args.handedness_reference) if args.handedness_reference else None
     options = resolve_preprocessing_options(images, args)
     theta = np.arange(0.0, 180.0, args.angle_step)
@@ -483,7 +483,7 @@ def main():
     if len(operators) > 1:
         print("Note: this score does not enforce graph-wide symmetry consistency.")
     print(f"Image preparation: {configuration_description(args)}")
-    witnesses = "all valid" if soft_voting_options is not None else str(args.n_third)
+    witnesses = "all valid" if soft_voting_options is not None else str(args.max_third)
     print(f"witnesses={witnesses}, angle_step={args.angle_step:g}, seed={args.seed}")
     print(f"Reconstitution method: {args.reconstitution_method}")
     print(f"Handedness method: {args.handedness_method}")
@@ -493,7 +493,7 @@ def main():
         )
     estimate = build_relative_orientations_graph_with_diagnostics(
         images,
-        n_third=args.n_third,
+        max_third=args.max_third,
         random_seed=args.seed,
         handedness_reference=reference,
         theta=theta,

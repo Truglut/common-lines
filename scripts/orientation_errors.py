@@ -7,7 +7,7 @@ Examples (from the repository root):
     python -m scripts.orientation_errors data/particles.npz --noise-std 1 2 5 10 \\
         --max-triplets 1000 --angle-step 1
     python -m scripts.orientation_errors data/particles.npz --modes detected \\
-        --reconstitution-method voting --n-third 24
+        --reconstitution-method voting --max-third 24
     python -m scripts.orientation_errors data/particles.npz --modes exact perturbed \\
         --reconstitution-method soft_voting --soft-voting-max-its 10
 
@@ -38,8 +38,8 @@ angles and do not process images. None of these modes runs pipeline.py's graph-l
 postprocessing. For STAR metadata or MRC stacks, see detection_errors.py.
 
 With --reconstitution-method, score pair aggregation instead of isolated
-triplets. Averaging and voting sample up to --n-third valid witnesses per pair;
-soft_voting uses all valid witnesses and ignores --n-third. The seed still
+triplets. Averaging and voting sample up to --max-third valid witnesses per pair;
+soft_voting uses all valid witnesses and ignores --max-third. The seed still
 controls image selection and angular noise. Both handedness candidates are scored per edge,
 with an independent symmetry oracle. These errors are optimistic relative to
 pipeline_errors.py, which chooses one global handedness for the whole graph.
@@ -143,7 +143,7 @@ def evaluate_aggregated_pairs(
     symmetry_ops: np.ndarray,
     *,
     method: ReconstitutionMethod,
-    n_third: int,
+    max_third: int,
     seed: int,
     soft_voting_options: SoftVotingOptions | None = None,
 ) -> list[dict[str, object]]:
@@ -154,7 +154,7 @@ def evaluate_aggregated_pairs(
     single graph-wide hand. All selected images can serve as witnesses.
     Input angles are in degrees; only the upper triangle is required.
     Soft voting uses all valid witnesses and accepts soft_voting_options;
-    n_third and the witness-sampling seed do not affect its updates.
+    max_third and the witness-sampling seed do not affect its updates.
     """
     n = len(matrices)
     i, j = np.triu_indices(n, 1)
@@ -163,7 +163,7 @@ def evaluate_aggregated_pairs(
     candidates, fallback = estimate_relative_orientation_candidates(
         a,
         b,
-        n_third=n_third,
+        max_third=max_third,
         random_seed=seed,
         method=method,
         soft_voting_options=soft_voting_options,
@@ -599,7 +599,7 @@ def main():
         help="Benchmark this pair-aggregation method instead of isolated triplets",
     )
     parser.add_argument(
-        "--n-third",
+        "--max-third",
         type=int,
         default=8,
         help="Maximum valid witnesses per pair for averaging/voting; ignored by soft_voting (default: 8)",
@@ -652,9 +652,9 @@ def main():
     )
     selected_matrices = matrices[indices]
     if args.reconstitution_method in ("averaging", "voting") and not (
-        1 <= args.n_third <= len(indices) - 2
+        1 <= args.max_third <= len(indices) - 2
     ):
-        parser.error("--n-third must lie in [1, selected image count - 2]")
+        parser.error("--max-third must lie in [1, selected image count - 2]")
     triplets = (
         sample_triplets(selected_matrices, args.max_triplets, rng)
         if args.reconstitution_method is None
@@ -667,7 +667,7 @@ def main():
     if args.reconstitution_method:
         print(f"Symmetry: {args.symmetry.upper()} (per-edge hand and symmetry oracle)")
         witnesses = (
-            "all valid" if soft_voting_options is not None else str(args.n_third)
+            "all valid" if soft_voting_options is not None else str(args.max_third)
         )
         print(
             f"Images: {len(indices)}; method={args.reconstitution_method}; witnesses={witnesses}; seed={args.seed}"
@@ -693,7 +693,7 @@ def main():
                 indices,
                 operators,
                 method=args.reconstitution_method,
-                n_third=args.n_third,
+                max_third=args.max_third,
                 seed=args.seed,
                 soft_voting_options=soft_voting_options,
             )

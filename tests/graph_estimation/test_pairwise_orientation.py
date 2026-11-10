@@ -38,7 +38,7 @@ def test_pairwise_fallback_is_minimal_in_plane_rotation():
         pairwise_orientation.estimate_relative_orientation_candidates(
             np.deg2rad([[0.0, theta_1_deg], [theta_2_deg, 0.0]]),
             np.deg2rad([[0.0, theta_2_deg], [theta_1_deg, 0.0]]),
-            n_third=1,
+            max_third=1,
             random_seed=0,
             method="averaging",  # method does not matter with no third image
         )
@@ -84,7 +84,7 @@ def test_graph_filters_and_samples_reproducibly(
     monkeypatch: pytest.MonkeyPatch,
     method: Literal["averaging", "voting"],
 ) -> None:
-    seed, n_third = 4, 2
+    seed, max_third = 4, 2
     calls: dict[tuple[int, int], np.ndarray] = {}
 
     def valid_triplets(triplet: CommonLineTriplet) -> BoolArray:
@@ -97,7 +97,7 @@ def test_graph_filters_and_samples_reproducibly(
     def record_selection(triplet: CommonLineTriplet) -> np.ndarray:
         third = triplet.one_with_three.first_rad
         assert valid_triplets(triplet).all()
-        assert 0 < len(third) <= n_third
+        assert 0 < len(third) <= max_third
         assert len(np.unique(third)) == len(third)
         i, j = int(triplet.one_with_two.second_rad), int(triplet.one_with_two.first_rad)
         assert (i, j) not in calls
@@ -121,13 +121,13 @@ def test_graph_filters_and_samples_reproducibly(
         pairwise_orientation.estimate_relative_orientation_candidates(
             first,
             second,
-            n_third=n_third,
+            max_third=max_third,
             random_seed=seed,
             method=method,
         )
     )
     selected = np.random.default_rng(seed).choice(
-        [3, 4, 5], size=n_third, replace=False
+        [3, 4, 5], size=max_third, replace=False
     )
     np.testing.assert_array_equal(calls[0, 1], selected)
     np.testing.assert_array_equal(calls[0, 2], [3])
@@ -142,7 +142,7 @@ def test_graph_filters_and_samples_reproducibly(
         pairwise_orientation.estimate_relative_orientation_candidates(
             first,
             second,
-            n_third=n_third,
+            max_third=max_third,
             random_seed=seed,
             method=method,
         )
@@ -162,7 +162,7 @@ def test_graph_filters_and_samples_reproducibly(
         pairwise_orientation.estimate_relative_orientation_candidates(
             first,
             second,
-            n_third=n_third,
+            max_third=max_third,
             random_seed=seed,
             method=method,
         )
@@ -178,7 +178,7 @@ def test_voting_uses_a_five_degree_bandwidth() -> None:
     second[1, 2:] = tilts
     candidates, fallback = (
         pairwise_orientation.estimate_relative_orientation_candidates(
-            first, second, n_third=tilts.size, random_seed=4, method="voting"
+            first, second, max_third=tilts.size, random_seed=4, method="voting"
         )
     )
     assert not fallback[0, 1]
@@ -192,7 +192,7 @@ def test_all_degenerate_triplets_use_identity_fallback(
 ) -> None:
     candidates, fallback = (
         pairwise_orientation.estimate_relative_orientation_candidates(
-            np.zeros((3, 3)), np.zeros((3, 3)), n_third=3, random_seed=4, method=method
+            np.zeros((3, 3)), np.zeros((3, 3)), max_third=3, random_seed=4, method=method
         )
     )
     np.testing.assert_array_equal(fallback, ~np.eye(3, dtype=bool))
@@ -214,7 +214,7 @@ def test_pairwise_candidates_match_matrix_solver_up_to_handedness(
     for angle_1, angle_2 in [(first, second), (noisy_first, noisy_second)]:
         actual, fallback = (
             pairwise_orientation.estimate_relative_orientation_candidates(
-                angle_1, angle_2, n_third=1, random_seed=4, method=method
+                angle_1, angle_2, max_third=1, random_seed=4, method=method
             )
         )
         # Three images give one triplet per edge, so the public matrix solver

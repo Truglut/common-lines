@@ -54,7 +54,7 @@ class OrientationEstimationResult:
 def build_relative_orientations_graph(
     images: np.ndarray,
     *,
-    n_third: int = 1,
+    max_third: int | None = None,
     random_seed: int | None = 0,
     handedness_reference: tuple[int, int] | None = None,
     theta: np.ndarray | None = None,
@@ -73,10 +73,11 @@ def build_relative_orientations_graph(
     images : np.ndarray
         Input images with shape ``(n_images, height, width)``, with at least
         three square images. The input is unchanged.
-    n_third : int
-        Maximum number of valid third images used to estimate each ordered pair
-        with "averaging" or "voting". Must lie in ``[1, n_images - 2]`` for those
-        methods. Ignored by "soft_voting", which uses all valid witnesses.
+    max_third : int or None, optional
+        Maximum number of valid third images used per ordered pair with
+        "averaging" or "voting". None (default) uses one for "averaging"
+        and all valid third images for "voting". Explicit values must lie
+        in [1, n_images - 2]. Ignored by "soft_voting".
     random_seed : int, optional
         Seed used to sample valid third images. Ignored by "soft_voting".
     handedness_reference : tuple[int, int], optional
@@ -154,7 +155,7 @@ def build_relative_orientations_graph(
     """
     return build_relative_orientations_graph_with_diagnostics(
         images,
-        n_third=n_third,
+        max_third=max_third,
         random_seed=random_seed,
         handedness_reference=handedness_reference,
         theta=theta,
@@ -170,7 +171,7 @@ def build_relative_orientations_graph(
 def build_relative_orientations_graph_with_diagnostics(
     images: np.ndarray,
     *,
-    n_third: int = 1,
+    max_third: int | None = None,
     random_seed: int | None = 0,
     handedness_reference: tuple[int, int] | None = None,
     theta: np.ndarray | None = None,
@@ -190,7 +191,7 @@ def build_relative_orientations_graph_with_diagnostics(
     global handedness.
 
     With reconstitution_method="soft_voting", all valid witnesses are used;
-    n_third and random_seed are ignored. soft_voting_options customizes the
+    max_third and random_seed are ignored. soft_voting_options customizes the
     update parameters, or None uses the defaults. Pairs without valid positive-
     weight witnesses in the final update use the canonical in-plane fallback
     and are marked in used_fallback.
@@ -209,11 +210,15 @@ def build_relative_orientations_graph_with_diagnostics(
     """
     images, theta_array = _validate_pipeline_inputs(
         images,
-        n_third=n_third,
+        max_third=max_third,
         handedness_reference=handedness_reference,
         theta=theta,
         common_line_block_size=common_line_block_size,
         reconstitution_method=reconstitution_method,
+    )
+
+    max_third = _default_max_third(
+        max_third, reconstitution_method, n_images=images.shape[0]
     )
 
     if precenter_method is not None:
@@ -239,7 +244,7 @@ def build_relative_orientations_graph_with_diagnostics(
     async_graph, used_fallback = estimate_relative_orientation_candidates(
         angle_1,
         angle_2,
-        n_third=n_third,
+        max_third=max_third,
         random_seed=random_seed,
         method=reconstitution_method,
         soft_voting_options=soft_voting_options,
@@ -263,7 +268,7 @@ def build_relative_orientations_graph_with_diagnostics(
 def _validate_pipeline_inputs(
     images: np.ndarray,
     *,
-    n_third: int,
+    max_third: int | None,
     handedness_reference: tuple[int, int] | None,
     theta: np.ndarray | None,
     common_line_block_size: int,
@@ -286,10 +291,14 @@ def _validate_pipeline_inputs(
     if n_images < 3:
         raise ValueError("At least three images are required.")
 
-    if reconstitution_method != "soft_voting" and not (1 <= n_third <= n_images - 2):
+    if (
+        reconstitution_method != "soft_voting"
+        and max_third is not None
+        and not (1 <= max_third <= n_images - 2)
+    ):
         raise ValueError(
-            f"n_third must be in [1, n_images - 2] = [1, {n_images - 2}], "
-            f"got {n_third}."
+            f"max_third must be in [1, n_images - 2] = [1, {n_images - 2}], "
+            f"got {max_third}."
         )
 
     if handedness_reference is not None:
@@ -341,3 +350,15 @@ def _resolve_handedness_reference(
     # If every edge used the in-plane fallback, the two handedness branches are
     # identical everywhere, so the particular reference pair is immaterial.
     return 0, 1
+
+
+def _default_max_third(
+    max_third: int | None, reconstitution_method: ReconstitutionMethod, n_images: int
+) -> int:
+    if max_third is not None:
+        return max_third
+
+    if reconstitution_method == "averaging":
+        return 1
+
+    return n_images - 2

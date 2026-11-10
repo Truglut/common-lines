@@ -37,7 +37,7 @@ def test_graph_recovers_known_frames_with_multiple_third_views(
     with np.errstate(divide="raise", invalid="raise"):
         candidates, fallback = (
             pairwise_orientation.estimate_relative_orientation_candidates(
-                first, second, n_third=3, random_seed=4, method=method
+                first, second, max_third=3, random_seed=4, method=method
             )
         )
     assert not fallback.any()
@@ -67,7 +67,7 @@ def test_graph_handles_nearly_parallel_views(
     )
     candidates, fallback = (
         pairwise_orientation.estimate_relative_orientation_candidates(
-            first, second, n_third=3, random_seed=4, method=method
+            first, second, max_third=3, random_seed=4, method=method
         )
     )
     assert not fallback.any()
@@ -178,7 +178,7 @@ def test_orientation_graph_uses_i_to_j_coordinate_convention() -> None:
         pairwise_orientation.estimate_relative_orientation_candidates(
             np.deg2rad(angle_1),
             np.deg2rad(angle_2),
-            n_third=1,
+            max_third=1,
             random_seed=0,
             method="voting",
         )

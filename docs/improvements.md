@@ -16,13 +16,12 @@ graph = build_relative_orientations_graph(
 )
 ```
 
-The parameter ``reconstitution_method`` can also be set to ``"voting"`` with similar results. Its optional ``n_third`` parameter defaults to ``1`` and must satisfy ``1 <= n_third <= n_images - 2``. With ``n_third=1``, ``"voting"`` is equivalent to ``"averaging"``. Use a larger value to combine multiple estimates, for example ``n_third=24`` when at least 26 images are available. ``"soft_voting"`` considers all third images and ignores ``n_third``.
+The parameter reconstitution_method can also be set to "voting" with similar results:
 
 ```python
 graph = build_relative_orientations_graph(
     images,
     reconstitution_method="voting",
-    n_third=24,
     handedness_method="synchronization",
 )
 ```

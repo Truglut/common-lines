@@ -92,7 +92,7 @@ def estimate_relative_orientation_candidates(
     angle_1: np.ndarray,
     angle_2: np.ndarray,
     *,
-    n_third: int,
+    max_third: int,
     random_seed: int | None,
     method: ReconstitutionMethod,
     soft_voting_options: SoftVotingOptions | None = None,
@@ -109,10 +109,10 @@ def estimate_relative_orientation_candidates(
         ``angle_2[i, j]`` is the corresponding oriented angle in image ``j``.
         Angles are expressed in radians and include detector-reversal
         corrections. Diagonal entries are unused.
-    n_third
-        Maximum number of valid third images used for each ordered pair with
-        "averaging" or "voting". Ignored by "soft_voting", which uses all valid
-        witnesses.
+    max_third : int
+        Maximum number of valid third images used per ordered pair with
+        "averaging" or "voting". Uses fewer if fewer valid images are available.
+        Must be positive for those methods. Ignored by "soft_voting".
     random_seed
         Seed used to sample valid third images uniformly without replacement.
         Ignored by "soft_voting".
@@ -147,8 +147,8 @@ def estimate_relative_orientation_candidates(
     """
     if method not in ("averaging", "voting", "soft_voting"):
         raise ValueError("method must be 'averaging', 'voting', or 'soft_voting'.")
-    if method != "soft_voting" and n_third < 1:
-        raise ValueError("n_third must be at least 1.")
+    if method != "soft_voting" and max_third < 1:
+        raise ValueError("max_third must be at least 1.")
     if soft_voting_options is not None and method != "soft_voting":
         raise ValueError(
             "Can only provide soft_voting_options when the selected reconstitution "
@@ -202,7 +202,7 @@ def estimate_relative_orientation_candidates(
 
         if valid_indices.size:
             selected = rng.choice(
-                valid_indices, size=min(n_third, valid_indices.size), replace=False
+                valid_indices, size=min(max_third, valid_indices.size), replace=False
             )
             selected_triplets = CommonLineTriplet(
                 one_with_two=triplets.one_with_two,

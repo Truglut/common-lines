@@ -249,7 +249,7 @@ def test_shared_preparation_matches_public_pipeline(monkeypatch):
     )
     main.build_relative_orientations_graph_with_diagnostics(
         images,
-        n_third=1,
+        max_third=1,
         theta=np.arange(0, 180, 30),
         precenter_method=args.precenter,
         preprocessing_options=options,
@@ -294,7 +294,7 @@ def test_public_pipeline_with_exact_detected_common_lines(monkeypatch):
     estimate = main.build_relative_orientations_graph_with_diagnostics(
         np.ones((6, 9, 9)),
         theta=np.arange(0.0, 180.0, 15.0),
-        n_third=2,
+        max_third=2,
     )
     assert not estimate.used_fallback.any()
     scored = evaluate_graph(estimate.graph, estimate.used_fallback, matrices)
@@ -350,7 +350,7 @@ def test_pipeline_cli_passes_and_records_methods(
         str(prefix),
     ]
     if method == "soft_voting":
-        command.extend(["--n-third", "0"])
+        command.extend(["--max-third", "0"])
         if handedness == "synchronization":
             command.extend(
                 [

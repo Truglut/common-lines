@@ -71,8 +71,8 @@ graph[i, j] = R_j @ R_i.T
 
 Pairwise relative orientations are estimated, then their handedness branches are selected together. The estimated graph is not explicitly constrained to satisfy inverse or cycle consistency.
 
-The default combination method is `reconstitution_method="averaging"`; `"voting"` uses Gaussian voting to determine alignment angles. Both use at most `n_third` valid third images per pair (default one), sampled using `random_seed`. Increase `n_third`, up to `n_images - 2`, to combine estimates from more third images.
-Iterative `"soft_voting"` introduces reliability weights onto Gaussian voting. This method uses all available third images (i.e., when estimating pair $(i, j)$, it uses all indices $k \not \in \{ i, j\}$), so the `n_third` parameter is ignored.
+The default combination method is ``reconstitution_method="averaging"``, which uses one valid third image per pair by default. ``"voting"`` uses Gaussian voting over all valid third images by default. For either method, max_third can explicitly limit the number used per pair; it must satisfy ``1 <= max_third <= n_images - 2``. Valid third images are sampled without replacement using ``random_seed``.
+Iterative ``"soft_voting"`` adds reliability weights to Gaussian voting and considers all third images. It ignores ``max_third`` and ``random_seed``.
 
 ## Handedness ambiguity
 

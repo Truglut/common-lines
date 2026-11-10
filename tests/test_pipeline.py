@@ -73,7 +73,7 @@ def test_pipeline_diagnostics_report_fallback_edges(
     result = pipeline.build_relative_orientations_graph_with_diagnostics(
         images,
         theta=np.array([0.0, 90.0]),
-        n_third=1,
+        max_third=1,
         precenter_method=None,
         reconstitution_method=method,
     )
@@ -166,7 +166,7 @@ def test_soft_voting_pipeline_preserves_reversals_and_options(
             theta=theta,
             reconstitution_method="soft_voting",
             soft_voting_options=options,
-            n_third=0,
+            max_third=0,
             random_seed=-1,
         )
         simple = pipeline.build_relative_orientations_graph(
@@ -174,7 +174,7 @@ def test_soft_voting_pipeline_preserves_reversals_and_options(
             theta=theta,
             reconstitution_method="soft_voting",
             soft_voting_options=options,
-            n_third=n_images + 1,
+            max_third=n_images + 1,
             random_seed=42,
         )
         assert voter.call_count == 2
@@ -221,7 +221,7 @@ def test_fallback_and_reconstitution_edges_share_i_to_j_convention(
     result = pipeline.build_relative_orientations_graph_with_diagnostics(
         np.zeros((4, 5, 5)),
         theta=np.array([0.0, 90.0]),
-        n_third=2,
+        max_third=2,
         random_seed=4,
         handedness_method=handedness_method,
         reconstitution_method=method,

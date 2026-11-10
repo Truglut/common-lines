@@ -23,8 +23,8 @@ from scripts.orientation_errors import (
 
 
 @pytest.mark.parametrize("method", ["averaging", "voting", "soft_voting"])
-@pytest.mark.parametrize("n_third", [1, 4])
-def test_aggregation_recovers_exact_and_mirrored_frames(method, n_third):
+@pytest.mark.parametrize("max_third", [1, 4])
+def test_aggregation_recovers_exact_and_mirrored_frames(method, max_third):
     matrices = random_rotations(6)
     first, second, _ = ground_truth_angles(matrices)
     for truth in (matrices, HANDEDNESS_REFLECTION @ matrices @ HANDEDNESS_REFLECTION):
@@ -37,7 +37,7 @@ def test_aggregation_recovers_exact_and_mirrored_frames(method, n_third):
             np.arange(6),
             np.eye(3)[None],
             method=method,
-            n_third=n_third,
+            max_third=max_third,
             seed=0,
         )
         assert len(rows) == 30
@@ -62,7 +62,7 @@ def test_aggregation_cli_records_method_and_preserves_noise_inputs(
         str(metadata),
         "--reconstitution-method",
         method,
-        "--n-third",
+        "--max-third",
         "0" if method == "soft_voting" else "3",
         "--modes",
         "exact",

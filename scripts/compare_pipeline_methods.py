@@ -56,8 +56,8 @@ def run_one(command: list[str], prefix: Path, environment: dict[str, str]) -> di
         "dataset": Path(configuration["metadata"]).stem,
         "n_images": n_images,
         "symmetry": configuration["symmetry"],
-        "budget": "half" if configuration["n_third"] == n_images // 2 else "full",
-        "n_third": configuration["n_third"],
+        "budget": "half" if configuration["max_third"] == n_images // 2 else "full",
+        "max_third": configuration["max_third"],
         "reconstitution_method": configuration["reconstitution_method"],
         "handedness_method": configuration["handedness_method"],
         "seed": configuration["seed"],
@@ -132,7 +132,7 @@ def main() -> None:
             if dataset.stem.startswith("trpv1")
             else "C1"
         )
-        for budget, n_third in (("half", n_images // 2), ("full", n_images - 2)):
+        for budget, max_third in (("half", n_images // 2), ("full", n_images - 2)):
             for seed in args.seeds:
                 for method in ("averaging", "voting"):
                     for handedness in ("star", "synchronization"):
@@ -149,8 +149,8 @@ def main() -> None:
                             str(dataset),
                             "--n-images",
                             str(n_images),
-                            "--n-third",
-                            str(n_third),
+                            "--max-third",
+                            str(max_third),
                             "--angle-step",
                             "2",
                             "--symmetry",
