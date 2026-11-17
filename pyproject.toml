@@ -19,6 +19,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+    "matplotlib",
+    "mrcfile",
     "pytest>=8",
     "scikit-image>=0.22",
 ]

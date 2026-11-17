@@ -1,7 +1,7 @@
 """Run all eight aggregation/handedness/witness-budget configurations.
 
 From the repository root:
-    python -m scripts.compare_pipeline_methods --jobs 4
+    python -m scripts.compare_pipeline_methods --datasets-dir PATH --jobs 4
 
 Uses every image, raw-image preparation, a 2-degree angular grid, and seeds
 0/1/2 by default. Proteasome uses D7 evaluation symmetry, TRPV1 C4, and other
@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -94,7 +95,7 @@ def main() -> None:
     parser.add_argument(
         "--datasets-dir",
         type=Path,
-        default=ROOT / "data/daniel/classes/manually-selected",
+        required=True,
     )
     parser.add_argument(
         "--output", type=Path, default=ROOT / "results/j_sync_comparison"
@@ -114,7 +115,7 @@ def main() -> None:
         OPENBLAS_NUM_THREADS="1",
         OMP_NUM_THREADS="1",
         NUMBA_NUM_THREADS="2",
-        MPLCONFIGDIR="/tmp/common-lines-mpl",
+        MPLCONFIGDIR=str(Path(tempfile.gettempdir()) / "common-lines-mpl"),
         MPLBACKEND="Agg",
     )
     runs: list[tuple[list[str], Path]] = []
