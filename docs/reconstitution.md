@@ -10,6 +10,12 @@ There are currently three different reconstitution methods that differ precisely
 - ``"voting"`` uses the fact that, when the rotations are parameterized in a ZYZ Euler convention, the common line between two images determines two out of three Euler angles of their relative rotation, while every possible third image gives an estimate for the third Euler angle. With this method, every third image casts a Gaussian vote in the $[0, \pi]$ interval to form a "voting histogram", and the final angle is the maximum of said histogram.
 - ``"soft_voting"`` uses the same procedure as ``"voting"``, but it adds a reliability score to each common line that weighs its contribution to the vote. The reliabilities are re-calculated after voting, so the method is iterative.
 
-By default, both ``"voting"`` and ``"soft_voting"`` consider all geometrically valid third images for each image pair. ``"averaging"`` by default only considers one random third image. The maximum number of third images whose estimates are aggregated is controlled by the ``max_third`` parameter of ``build_relative_orientations_graph``. The parameter works for ``"averaging"`` and ``"voting"``, but is ignored by ``"soft_voting"``.
-
 Pairs without usable third-image support receive a canonical in-plane fallback rotation.
+
+## A note on third-image counts
+
+For ``"averaging"`` and ``"voting"``, the ``max_third`` parameter of ``build_relative_orientations_graph`` sets the maximum number of third images whose estimates are aggregated (``"soft_voting"`` ignores this parameter). The actual number can be lower if some third images have invalid geometry.
+
+When there is only one usable third image for a pair, all three methods give the same relative rotation. Both voting methods use all valid third images by default, but averaging defaults to one third image to preserve old behavior.
+
+This means that if ``max_third`` is left at its default, the voting methods will generally use more estimates than averaging, so comparisons between them may not be fair. To compare all three methods using the same third images, set ``max_third=n_images - 2`` for averaging and voting.
