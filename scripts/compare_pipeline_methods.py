@@ -7,7 +7,8 @@ From the repository root:
 Uses every image, every valid third-image witness, the stored class averages,
 a 2-degree angular grid, and seed 0 by default. Each run invokes
 scripts.pipeline_errors, which evaluates the public pipeline's relative
-rotations using the dataset's point group.
+rotations using the dataset's point group. The dataset directory must contain
+a datasets.csv with a file and symmetry entry for every NPZ stack.
 """
 
 from __future__ import annotations
@@ -28,15 +29,36 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-DATASET_SYMMETRIES = {
-    "pch": "D5",
-    "empiar-10061": "D2",
-    "empiar-10336": "C1",
-    "empiar-10406": "C1",
-    "empiar-10532": "C3",
-    "proteasome": "D7",
-    "trpv1": "C4",
-}
+
+
+def read_dataset_symmetries(path: Path, files: list[Path]) -> dict[str, str]:
+    """Read one point group per NPZ filename."""
+    filenames = {file.name for file in files}
+    symmetries: dict[str, str] = {}
+    with path.open(encoding="utf-8-sig", newline="") as source:
+        rows = csv.DictReader(source, strict=True)
+        if not {"file", "symmetry"}.issubset(rows.fieldnames or ()):
+            raise ValueError(f"{path} must include file and symmetry columns")
+        for row in rows:
+            filename = (row["file"] or "").strip()
+            symmetry = (row["symmetry"] or "").strip().upper()
+            if filename not in filenames:
+                raise ValueError(
+                    f"{path}:{rows.line_num}: unknown NPZ file {filename!r}"
+                )
+            if filename in symmetries:
+                raise ValueError(
+                    f"{path}:{rows.line_num}: duplicate entry for {filename}"
+                )
+            if not symmetry:
+                raise ValueError(
+                    f"{path}:{rows.line_num}: missing symmetry for {filename}"
+                )
+            symmetries[filename] = symmetry
+    missing = filenames - symmetries.keys()
+    if missing:
+        raise ValueError(f"{path} has no entries for {', '.join(sorted(missing))}")
+    return symmetries
 
 
 def run_one(command: list[str], prefix: Path, environment: dict[str, str]) -> dict:
@@ -105,6 +127,7 @@ def main() -> None:
         "--datasets-dir",
         type=Path,
         required=True,
+        help="Directory containing NPZ stacks and their datasets.csv metadata",
     )
     parser.add_argument(
         "--output", type=Path, default=ROOT / "results/j_sync_comparison"
@@ -114,9 +137,15 @@ def main() -> None:
     args = parser.parse_args()
     if args.jobs < 1 or len(args.seeds) != len(set(args.seeds)):
         parser.error("--jobs must be positive and --seeds must be distinct")
-    files = sorted(args.datasets_dir.resolve().glob("*.npz"))
+    datasets_dir = args.datasets_dir.resolve()
+    files = sorted(datasets_dir.glob("*.npz"))
     if not files:
         parser.error("No NPZ datasets found")
+    datasets_csv = datasets_dir / "datasets.csv"
+    try:
+        symmetries = read_dataset_symmetries(datasets_csv, files)
+    except (OSError, ValueError, csv.Error) as exc:
+        parser.error(str(exc))
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     environment = dict(
@@ -133,14 +162,7 @@ def main() -> None:
             n_images = len(data["matrices"])
         if n_images < 3:
             parser.error(f"At least three images required: {dataset}")
-        symmetry = next(
-            (
-                group
-                for name, group in DATASET_SYMMETRIES.items()
-                if dataset.stem == name or dataset.stem.startswith(f"{name}-")
-            ),
-            "C1",
-        )
+        symmetry = symmetries[dataset.name]
         max_third = n_images - 2
         for seed in args.seeds:
             for method in ("averaging", "voting", "soft_voting"):
@@ -192,7 +214,8 @@ def main() -> None:
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
         "sha256": {
-            str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files + sources
+            str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in [datasets_csv, *files, *sources]
         },
         "commands": [command for command, _ in runs],
         "jobs": args.jobs,
