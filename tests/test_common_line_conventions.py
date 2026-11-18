@@ -79,3 +79,21 @@ def test_blocked_all_pairs_detection_uses_the_same_angle_convention():
     assert angle_1[0, 1] == pytest.approx(40.0)
     assert angle_2[0, 1] == pytest.approx(220.0)
     assert graph.correlation[0, 1] == pytest.approx(1.0)
+
+
+def test_even_radon_profiles_reverse_about_the_detector_center():
+    size = 128
+    center = size // 2
+    rows, columns = np.mgrid[:size, :size]
+    image = np.exp(-((columns - (center + 11)) ** 2 + (rows - (center + 7)) ** 2) / 8.0)
+
+    profiles = batch_common_line_sinograms(
+        image,
+        theta=np.array([27.0, 207.0]),
+        symmetric_detector=True,
+    )
+
+    assert profiles.shape == (129, 2)
+    np.testing.assert_allclose(
+        profiles[:, 0], profiles[::-1, 1], rtol=1e-10, atol=1e-10
+    )

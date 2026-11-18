@@ -229,7 +229,9 @@ def build_relative_orientations_graph_with_diagnostics(
         images = shift_images(images, shifts)
 
     images_for_detection = preprocess_images(images, options=preprocessing_options)
-    sinograms = batch_common_line_sinograms(images_for_detection, theta=theta_array)
+    sinograms = batch_common_line_sinograms(
+        images_for_detection, theta=theta_array, symmetric_detector=True
+    )
     del images, images_for_detection
 
     common_lines = detect_common_lines_all_pairs(

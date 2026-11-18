@@ -229,7 +229,8 @@ def test_shared_preparation_matches_public_pipeline(monkeypatch):
     )
     captured = []
 
-    def capture_sinograms(prepared, theta):
+    def capture_sinograms(prepared, theta, *, symmetric_detector):
+        assert symmetric_detector is True
         captured.append(prepared.copy())
         return np.zeros((len(prepared), 9, len(theta)))
 
@@ -284,7 +285,9 @@ def test_public_pipeline_with_exact_detected_common_lines(monkeypatch):
     monkeypatch.setattr(
         main,
         "batch_common_line_sinograms",
-        lambda images, theta: np.zeros((len(images), 9, len(theta))),
+        lambda images, theta, *, symmetric_detector: np.zeros(
+            (len(images), 9, len(theta))
+        ),
     )
     monkeypatch.setattr(
         main,

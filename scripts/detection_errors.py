@@ -292,7 +292,9 @@ def validate(matrices, images, theta, symmetry_ops=None):
     if len(i) == 0:
         raise ValueError("No nondegenerate image pairs were selected")
 
-    sinograms = batch_common_line_sinograms(images, theta=theta)
+    sinograms = batch_common_line_sinograms(
+        images, theta=theta, symmetric_detector=True
+    )
     graph = detect_common_lines_all_pairs(sinograms, allow_reversed=True)
     measured_i, measured_j = graph.oriented_angles(theta)
     measured = np.column_stack((measured_i[i, j], measured_j[i, j]))

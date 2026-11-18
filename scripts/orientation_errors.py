@@ -294,7 +294,9 @@ def detected_angles(
     images = prepare_images(
         images, precenter=precenter, preprocessing_options=preprocessing_options
     )
-    sinograms = batch_common_line_sinograms(images, theta=theta)
+    sinograms = batch_common_line_sinograms(
+        images, theta=theta, symmetric_detector=True
+    )
     graph = detect_common_lines_all_pairs(sinograms, allow_reversed=True)
     first, second = graph.oriented_angles(theta)
     return first, second, graph.correlation

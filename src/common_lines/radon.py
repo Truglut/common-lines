@@ -12,11 +12,12 @@ def _batch_radon(
     *,
     circle: bool = True,
     warn_if_nonzero_outside_circle: bool = False,
+    symmetric_detector: bool = False,
 ) -> np.ndarray:
     """
     Compute Radon sinograms for a full batch of 2D images.
 
-    This is designed to match the convention used by:
+    When `symmetric_detector` is False, this matches the convention used by:
 
         skimage.transform.radon(image, theta=theta, circle=circle,
                                 preserve_range=True)
@@ -37,6 +38,10 @@ def _batch_radon(
     warn_if_nonzero_outside_circle
         If True and circle=True, issue a warning when pixels outside the
         reconstruction circle are nonzero, following the spirit of skimage.
+    symmetric_detector
+        If True and the prepared square has even width, use an extra zero row
+        and column at the high-index ends of the working grid. This adds one
+        detector sample and keeps the rotation center at the same pixel.
 
     Returns
     -------
@@ -70,8 +75,14 @@ def _batch_radon(
     prepared = _prepare_images_like_skimage(images, circle=circle)
     prepared = np.ascontiguousarray(prepared)
 
+    working_size = prepared.shape[1]
+    if symmetric_detector and working_size % 2 == 0:
+        working_size += 1
+
     theta_rad = np.deg2rad(theta)
-    sinograms = _batch_radon_square_numba(prepared, theta_rad)
+    sinograms = _batch_radon_square_numba(
+        prepared, theta_rad, working_size=working_size
+    )
 
     if input_ndim == 2:
         return sinograms[0]
@@ -144,28 +155,32 @@ def _warn_if_nonzero_outside_circle(images: np.ndarray) -> None:
 def _batch_radon_square_numba(
     images: np.ndarray,
     theta_rad: np.ndarray,
+    working_size: int,
 ) -> np.ndarray:
     """
     Numba kernel for a batch of square images.
 
-    images shape: (B, S, S)
-    output shape: (B, S, A)
+    The input has shape (B, input_size, input_size). The output has shape
+    (B, working_size, A), where A is the number of angles. For symmetric
+    detector support on even inputs, working_size is input_size + 1.
+    Interpolation outside the input array contributes zero, so the extra row
+    and column are implicit.
 
     The implementation follows the same affine rotation convention as
     skimage.transform.radon: rotate image, then sum over rows.
     """
-    batch_size, size, _ = images.shape
+    batch_size, input_size, _ = images.shape
     n_angles = theta_rad.shape[0]
 
-    out = np.empty((batch_size, size, n_angles), dtype=images.dtype)
-    center = size // 2
+    out = np.empty((batch_size, working_size, n_angles), dtype=images.dtype)
+    center = working_size // 2
 
-    n_jobs = batch_size * size * n_angles
+    n_jobs = batch_size * working_size * n_angles
 
     for idx in prange(n_jobs):
         angle_idx = idx % n_angles
-        detector_idx = (idx // n_angles) % size
-        batch_idx = idx // (n_angles * size)
+        detector_idx = (idx // n_angles) % working_size
+        batch_idx = idx // (n_angles * working_size)
 
         angle = theta_rad[angle_idx]
         cos_a = np.cos(angle)
@@ -176,7 +191,7 @@ def _batch_radon_square_numba(
 
         total = 0.0
 
-        for row_out in range(size):
+        for row_out in range(working_size):
             src_col = col_base + sin_a * row_out
             src_row = row_base + cos_a * row_out
 
@@ -189,16 +204,16 @@ def _batch_radon_square_numba(
             row1 = row0 + 1
             col1 = col0 + 1
 
-            if 0 <= row0 < size:
-                if 0 <= col0 < size:
+            if 0 <= row0 < input_size:
+                if 0 <= col0 < input_size:
                     total += images[batch_idx, row0, col0] * (1.0 - wr) * (1.0 - wc)
-                if 0 <= col1 < size:
+                if 0 <= col1 < input_size:
                     total += images[batch_idx, row0, col1] * (1.0 - wr) * wc
 
-            if 0 <= row1 < size:
-                if 0 <= col0 < size:
+            if 0 <= row1 < input_size:
+                if 0 <= col0 < input_size:
                     total += images[batch_idx, row1, col0] * wr * (1.0 - wc)
-                if 0 <= col1 < size:
+                if 0 <= col1 < input_size:
                     total += images[batch_idx, row1, col1] * wr * wc
 
         out[batch_idx, detector_idx, angle_idx] = total
@@ -212,6 +227,7 @@ def batch_common_line_sinograms(
     *,
     circle: bool = True,
     warn_if_nonzero_outside_circle: bool = False,
+    symmetric_detector: bool = False,
 ) -> np.ndarray:
     """
     Compute sinograms using the angular convention expected by the common-line
@@ -243,6 +259,11 @@ def batch_common_line_sinograms(
     warn_if_nonzero_outside_circle : bool, optional
         Warn about nonzero values outside the inscribed circle when
         ``circle=True``. Default is False.
+    symmetric_detector : bool, optional
+        Use an odd detector width so array reversal reflects the profile about
+        the rotation center. For an even prepared image, add one detector
+        sample by extending the working grid with zeros at the high-index
+        edges. Default is False.
 
     Returns
     -------
@@ -262,4 +283,5 @@ def batch_common_line_sinograms(
         theta=-theta,
         circle=circle,
         warn_if_nonzero_outside_circle=warn_if_nonzero_outside_circle,
+        symmetric_detector=symmetric_detector,
     )

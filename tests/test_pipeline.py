@@ -42,7 +42,9 @@ def _patch_detected_common_lines(
     monkeypatch.setattr(
         pipeline,
         "batch_common_line_sinograms",
-        lambda images, theta: np.empty((images.shape[0], len(theta), images.shape[-1])),
+        lambda images, theta, *, symmetric_detector: np.empty(
+            (images.shape[0], len(theta), images.shape[-1])
+        ),
     )
     monkeypatch.setattr(
         pipeline,
@@ -144,7 +146,9 @@ def test_soft_voting_pipeline_preserves_reversals_and_options(
     monkeypatch.setattr(
         pipeline,
         "batch_common_line_sinograms",
-        lambda images, theta: np.empty((len(images), len(theta), images.shape[-1])),
+        lambda images, theta, *, symmetric_detector: np.empty(
+            (len(images), len(theta), images.shape[-1])
+        ),
     )
     monkeypatch.setattr(
         pipeline,
@@ -291,7 +295,8 @@ def test_pipeline_preprocessing_order(monkeypatch, precenter_method, enabled):
         calls.append("shift")
         return centered
 
-    def sinograms(batch, *, theta):
+    def sinograms(batch, *, theta, symmetric_detector):
+        assert symmetric_detector is True
         assert batch is processed_batches[-1]
 
         expected = centered if precenter_method is not None else images
