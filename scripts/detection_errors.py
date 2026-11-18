@@ -138,7 +138,8 @@ def star_angles_to_matrices(particles):
 def read_metadata(path):
     """Return (rotation_matrices, image_names, embedded_images).
 
-    .npz: expects 'matrices', optionally 'original_images' and 'image_names'.
+    .npz: expects 'matrices', with optional 'image_names' and embedded images
+    under 'images' (preferred) or 'original_images'.
     .star: expects RELION particle columns; image paths are 'index@path'.
     """
     if path.suffix.lower() == ".npz":
@@ -149,11 +150,13 @@ def read_metadata(path):
                 if "image_names" in data
                 else None
             )
-            images = (
-                np.asarray(data["original_images"])
-                if "original_images" in data
-                else None
-            )
+            if "images" in data:
+                images = np.asarray(data["images"])
+            elif "original_images" in data:
+                images = np.asarray(data["original_images"])
+            else:
+                images = None
+
         return matrices, names, images
 
     if path.suffix.lower() == ".star":

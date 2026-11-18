@@ -1,12 +1,13 @@
-"""Run all eight aggregation/handedness/witness-budget configurations.
+"""Compare all six reconstitution and handedness method combinations.
 
 From the repository root:
-    python -m scripts.compare_pipeline_methods --datasets-dir PATH --jobs 4
+    python -m scripts.compare_pipeline_methods \
+        --datasets-dir data/class-averages/converted --jobs 4
 
-Uses every image, raw-image preparation, a 2-degree angular grid, and seeds
-0/1/2 by default. Proteasome uses D7 evaluation symmetry, TRPV1 C4, and other
-datasets C1, matching the earlier manually-selected-data comparison. Each run
-invokes scripts.pipeline_errors, including the complete public pipeline.
+Uses every image, every valid third-image witness, the stored class averages,
+a 2-degree angular grid, and seed 0 by default. Each run invokes
+scripts.pipeline_errors, which evaluates the public pipeline's relative
+rotations using the dataset's point group.
 """
 
 from __future__ import annotations
@@ -27,6 +28,15 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+DATASET_SYMMETRIES = {
+    "pch": "D5",
+    "empiar-10061": "D2",
+    "empiar-10336": "C1",
+    "empiar-10406": "C1",
+    "empiar-10532": "C3",
+    "proteasome": "D7",
+    "trpv1": "C4",
+}
 
 
 def run_one(command: list[str], prefix: Path, environment: dict[str, str]) -> dict:
@@ -57,7 +67,6 @@ def run_one(command: list[str], prefix: Path, environment: dict[str, str]) -> di
         "dataset": Path(configuration["metadata"]).stem,
         "n_images": n_images,
         "symmetry": configuration["symmetry"],
-        "budget": "half" if configuration["max_third"] == n_images // 2 else "full",
         "max_third": configuration["max_third"],
         "reconstitution_method": configuration["reconstitution_method"],
         "handedness_method": configuration["handedness_method"],
@@ -100,7 +109,7 @@ def main() -> None:
     parser.add_argument(
         "--output", type=Path, default=ROOT / "results/j_sync_comparison"
     )
-    parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
+    parser.add_argument("--seeds", type=int, nargs="+", default=[0])
     parser.add_argument("--jobs", type=int, default=1)
     args = parser.parse_args()
     if args.jobs < 1 or len(args.seeds) != len(set(args.seeds)):
@@ -122,54 +131,53 @@ def main() -> None:
     for dataset in files:
         with np.load(dataset) as data:
             n_images = len(data["matrices"])
-        if n_images < 4:
-            parser.error(
-                f"At least four images required for half/full budgets: {dataset}"
-            )
-        symmetry = (
-            "D7"
-            if dataset.stem.startswith("proteasome")
-            else "C4"
-            if dataset.stem.startswith("trpv1")
-            else "C1"
+        if n_images < 3:
+            parser.error(f"At least three images required: {dataset}")
+        symmetry = next(
+            (
+                group
+                for name, group in DATASET_SYMMETRIES.items()
+                if dataset.stem == name or dataset.stem.startswith(f"{name}-")
+            ),
+            "C1",
         )
-        for budget, max_third in (("half", n_images // 2), ("full", n_images - 2)):
-            for seed in args.seeds:
-                for method in ("averaging", "voting"):
-                    for handedness in ("star", "synchronization"):
-                        prefix = (
-                            output
-                            / "pipeline"
-                            / f"{dataset.stem}_{budget}_seed{seed}_{method}_{handedness}"
-                        )
-                        prefix.parent.mkdir(parents=True, exist_ok=True)
-                        command = [
-                            sys.executable,
-                            "-m",
-                            "scripts.pipeline_errors",
-                            str(dataset),
-                            "--n-images",
-                            str(n_images),
-                            "--max-third",
-                            str(max_third),
-                            "--angle-step",
-                            "2",
-                            "--symmetry",
-                            symmetry,
-                            "--seed",
-                            str(seed),
-                            "--precenter",
-                            "none",
-                            "--preprocessing",
-                            "none",
-                            "--reconstitution-method",
-                            method,
-                            "--handedness-method",
-                            handedness,
-                            "--output",
-                            str(prefix),
-                        ]
-                        runs.append((command, prefix))
+        max_third = n_images - 2
+        for seed in args.seeds:
+            for method in ("averaging", "voting", "soft_voting"):
+                for handedness in ("star", "synchronization"):
+                    prefix = (
+                        output
+                        / "pipeline"
+                        / f"{dataset.stem}_full_seed{seed}_{method}_{handedness}"
+                    )
+                    prefix.parent.mkdir(parents=True, exist_ok=True)
+                    command = [
+                        sys.executable,
+                        "-m",
+                        "scripts.pipeline_errors",
+                        str(dataset),
+                        "--n-images",
+                        str(n_images),
+                        "--max-third",
+                        str(max_third),
+                        "--angle-step",
+                        "2",
+                        "--symmetry",
+                        symmetry,
+                        "--seed",
+                        str(seed),
+                        "--precenter",
+                        "none",
+                        "--preprocessing",
+                        "none",
+                        "--reconstitution-method",
+                        method,
+                        "--handedness-method",
+                        handedness,
+                        "--output",
+                        str(prefix),
+                    ]
+                    runs.append((command, prefix))
 
     sources = sorted((ROOT / "src/common_lines").rglob("*.py")) + sorted(
         (ROOT / "scripts").glob("*.py")
@@ -217,7 +225,6 @@ def main() -> None:
             results.sort(
                 key=lambda r: (
                     r["dataset"],
-                    r["budget"],
                     r["seed"],
                     r["reconstitution_method"],
                     r["handedness_method"],
